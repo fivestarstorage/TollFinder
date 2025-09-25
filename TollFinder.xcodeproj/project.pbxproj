@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		09B7E5632E855E2600FE50EF /* ToastifySwift in Frameworks */ = {isa = PBXBuildFile; productRef = 09B7E5622E855E2600FE50EF /* ToastifySwift */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		096DD8EF2E83DEAC00C914BB /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				09B7E5632E855E2600FE50EF /* ToastifySwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = TollFinder;
 			packageProductDependencies = (
+				09B7E5622E855E2600FE50EF /* ToastifySwift */,
 			);
 			productName = TollFinder;
 			productReference = 096DD8DC2E83DEAB00C914BB /* TollFinder.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = 096DD8D32E83DEAB00C914BB;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				09B7E5612E855E2600FE50EF /* XCRemoteSwiftPackageReference "ToastifySwift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 096DD8DD2E83DEAB00C914BB /* Products */;
 			projectDirPath = "";
@@ -576,6 +585,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		09B7E5612E855E2600FE50EF /* XCRemoteSwiftPackageReference "ToastifySwift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/RJIOSDEV/ToastifySwift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		09B7E5622E855E2600FE50EF /* ToastifySwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 09B7E5612E855E2600FE50EF /* XCRemoteSwiftPackageReference "ToastifySwift" */;
+			productName = ToastifySwift;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 096DD8D42E83DEAB00C914BB /* Project object */;
 }

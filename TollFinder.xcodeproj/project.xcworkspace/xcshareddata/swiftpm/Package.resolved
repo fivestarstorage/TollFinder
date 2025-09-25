@@ -1,0 +1,15 @@
+{
+  "originHash" : "77dbdc77e5aefe1816a9956ab3e5a86b998514e9c322619eca5a436d84599603",
+  "pins" : [
+    {
+      "identity" : "toastifyswift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/RJIOSDEV/ToastifySwift",
+      "state" : {
+        "revision" : "b3e3dd7783d6c2e3887a7a1d37bf5aa2a1a4694f",
+        "version" : "1.0.3"
+      }
+    }
+  ],
+  "version" : 3
+}
