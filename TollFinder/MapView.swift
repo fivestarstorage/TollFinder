@@ -95,6 +95,8 @@ struct MapView: View {
     @State private var allStops: [RouteStop] = []
     @State private var mapAnnotations: [StopAnnotation] = []
     @StateObject var toastManager = ToastManager()
+    @State private var isMapLocked = false
+    @State private var routeOverlays: [MKPolyline] = []
     
     enum ActiveField: Equatable {
         case stop(Int)
@@ -102,7 +104,7 @@ struct MapView: View {
     
     var body: some View {
         ZStack {
-        Map(coordinateRegion: $region, showsUserLocation: true, annotationItems: mapAnnotations) { annotation in
+        Map(coordinateRegion: $region, interactionModes: isMapLocked ? [] : .all, showsUserLocation: true, annotationItems: mapAnnotations) { annotation in
             MapAnnotation(coordinate: annotation.coordinate) {
                 VStack {
                     Text(annotation.title)
@@ -130,7 +132,7 @@ struct MapView: View {
                 
                 Button(action: {
                     print("Find Tolls button pressed - current stops: \(allStops.count)")
-                    frameAllStops()
+                    frameAllStopsAndLock()
                     showingAddressInput = true
                 }) {
                     HStack {
@@ -157,7 +159,9 @@ struct MapView: View {
                 region.center = location.coordinate
             }
         }
-        .sheet(isPresented: $showingAddressInput) {
+        .sheet(isPresented: $showingAddressInput, onDismiss: {
+            unlockMap()
+        }) {
             AddressInputSheet(
                 stopAddresses: $stopAddresses,
                 activeField: $activeField,
@@ -415,6 +419,21 @@ struct MapView: View {
             }
             print("frameAllStops: Region updated to center: \(self.region.center.latitude), \(self.region.center.longitude)")
         }
+    }
+    
+    private func frameAllStopsAndLock() {
+        frameAllStops()
+        
+        // Lock the map after framing
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
+            self.isMapLocked = true
+            print("Map locked - interaction disabled")
+        }
+    }
+    
+    private func unlockMap() {
+        isMapLocked = false
+        print("Map unlocked - interaction enabled")
     }
 }
 
