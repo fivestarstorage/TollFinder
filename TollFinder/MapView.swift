@@ -97,6 +97,7 @@ struct MapView: View {
     @StateObject var toastManager = ToastManager()
     @State private var isMapLocked = false
     @State private var routeOverlays: [MKPolyline] = []
+    @State private var routeLines: [RouteLine] = []
     
     enum ActiveField: Equatable {
         case stop(Int)
@@ -108,23 +109,40 @@ struct MapView: View {
             MapAnnotation(coordinate: annotation.coordinate) {
                 VStack {
                     Text(annotation.title)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(annotation.color)
-                        .cornerRadius(8)
-                        .shadow(radius: 2)
-                    
-                    Image(systemName: "mappin.circle.fill")
-                        .font(.system(size: 24))
-                        .foregroundColor(annotation.color)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
                         .background(Color.white)
-                        .clipShape(Circle())
-                        .shadow(radius: 2)
+                        .cornerRadius(6)
+                        .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    
+                    Circle()
+                        .fill(Color.black)
+                        .frame(width: 12, height: 12)
+                        .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
                 }
             }
         }
+        .overlay(
+            // Draw route lines
+            ForEach(routeLines, id: \.id) { routeLine in
+                Path { path in
+                    for (index, coordinate) in routeLine.coordinates.enumerated() {
+                        let point = coordinateToPoint(coordinate, in: region)
+                        if index == 0 {
+                            path.move(to: point)
+                        } else {
+                            path.addLine(to: point)
+                        }
+                    }
+                }
+                .stroke(Color.blue, lineWidth: 3)
+            }
+        )
         .ignoresSafeArea()
             
             VStack {
@@ -368,10 +386,13 @@ struct MapView: View {
                 coordinate: stop.coordinate,
                 title: displayTitle,
                 subtitle: "",
-                color: .blue
+                color: .black
             )
         }
         print("updateMapAnnotations: Created \(mapAnnotations.count) annotations")
+        
+        // Generate route between stops
+        generateRouteBetweenStops()
     }
     
     private func frameAllStops() {
@@ -405,9 +426,10 @@ struct MapView: View {
             longitude: (minLon + maxLon) / 2
         )
         
+        // Add extra padding to ensure annotations fit on screen
         let span = MKCoordinateSpan(
-            latitudeDelta: max(maxLat - minLat, 0.01) * 1.5,
-            longitudeDelta: max(maxLon - minLon, 0.01) * 1.5
+            latitudeDelta: max(maxLat - minLat, 0.01) * 2.0,
+            longitudeDelta: max(maxLon - minLon, 0.01) * 2.0
         )
         
         print("frameAllStops: Bounds - minLat: \(minLat), maxLat: \(maxLat), minLon: \(minLon), maxLon: \(maxLon)")
@@ -435,6 +457,83 @@ struct MapView: View {
         isMapLocked = false
         print("Map unlocked - interaction enabled")
     }
+    
+    private func generateRouteBetweenStops() {
+        guard allStops.count >= 2 else {
+            routeOverlays = []
+            return
+        }
+        
+        let validStops = allStops.filter { stop in
+            stop.coordinate.latitude != 0 && stop.coordinate.longitude != 0 && !stop.address.isEmpty
+        }
+        
+        guard validStops.count >= 2 else {
+            routeOverlays = []
+            routeLines = []
+            return
+        }
+        
+        print("Generating routes between \(validStops.count) stops")
+        routeOverlays = []
+        routeLines = []
+        
+        // Create routes between consecutive stops
+        for i in 0..<(validStops.count - 1) {
+            let startStop = validStops[i]
+            let endStop = validStops[i + 1]
+            
+            let request = MKDirections.Request()
+            request.source = MKMapItem(placemark: MKPlacemark(coordinate: startStop.coordinate))
+            request.destination = MKMapItem(placemark: MKPlacemark(coordinate: endStop.coordinate))
+            request.transportType = .automobile
+            
+            let directions = MKDirections(request: request)
+            directions.calculate { response, error in
+                if let error = error {
+                    print("Route calculation error between stop \(i+1) and \(i+2): \(error.localizedDescription)")
+                    return
+                }
+                
+                guard let route = response?.routes.first else {
+                    print("No route found between stop \(i+1) and \(i+2)")
+                    return
+                }
+                
+                DispatchQueue.main.async {
+                    self.routeOverlays.append(route.polyline)
+                    
+                    // Convert polyline to coordinates for SwiftUI overlay
+                    let coordinates = self.polylineToCoordinates(route.polyline)
+                    let routeLine = RouteLine(id: UUID(), coordinates: coordinates)
+                    self.routeLines.append(routeLine)
+                    
+                    print("Added route segment \(i+1) -> \(i+2): \(route.distance/1000) km with \(coordinates.count) points")
+                }
+            }
+        }
+    }
+    
+    private func polylineToCoordinates(_ polyline: MKPolyline) -> [CLLocationCoordinate2D] {
+        let pointCount = polyline.pointCount
+        let coordinates = UnsafeMutablePointer<CLLocationCoordinate2D>.allocate(capacity: pointCount)
+        defer { coordinates.deallocate() }
+        
+        polyline.getCoordinates(coordinates, range: NSRange(location: 0, length: pointCount))
+        
+        return Array(UnsafeBufferPointer(start: coordinates, count: pointCount))
+    }
+    
+    private func coordinateToPoint(_ coordinate: CLLocationCoordinate2D, in region: MKCoordinateRegion) -> CGPoint {
+        // This is a simplified conversion - in a real app you'd want more precise conversion
+        let mapRect = MKMapRect.world
+        let mapPoint = MKMapPoint(coordinate)
+        
+        let x = (mapPoint.x / mapRect.size.width) * UIScreen.main.bounds.width
+        let y = (mapPoint.y / mapRect.size.height) * UIScreen.main.bounds.height
+        
+        return CGPoint(x: x, y: y)
+    }
 }
 
 struct StopAnnotation: Identifiable {
@@ -443,6 +542,11 @@ struct StopAnnotation: Identifiable {
     let title: String
     let subtitle: String
     let color: Color
+}
+
+struct RouteLine: Identifiable {
+    let id: UUID
+    let coordinates: [CLLocationCoordinate2D]
 }
 
 struct AddressInputSheet: View {
