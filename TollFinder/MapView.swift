@@ -3,6 +3,7 @@ import MapKit
 import CoreLocation
 import Combine
 import ToastifySwift
+import Shimmer
 
 struct RouteStop: Identifiable, Codable {
     let id = UUID()
@@ -99,7 +100,7 @@ struct MapView: View {
     @State private var routeOverlays: [MKPolyline] = []
     @StateObject private var tollCalculator = TollCalculatorViewModel()
     
-    enum ActiveField: Equatable {
+    enum ActiveField: Hashable {
         case stop(Int)
     }
     
@@ -112,6 +113,10 @@ struct MapView: View {
             polylines: routeOverlays
         )
         .ignoresSafeArea()
+        .overlay(
+            ShimmeringRoutesOverlay(region: $region, polylines: routeOverlays)
+                .allowsHitTesting(false)
+        )
             
             VStack {
                 Spacer()
@@ -678,21 +683,11 @@ struct MapViewWithPolylines: UIViewRepresentable {
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let polyline = overlay as? MKPolyline {
                 if let existing = polylineRenderers[polyline] { return existing }
-            let renderer = MKPolylineRenderer(polyline: polyline)
-            renderer.strokeColor = UIColor.black
-            renderer.lineWidth = 1.0
-            renderer.lineDashPattern = [2, 2]
+                let renderer = MKPolylineRenderer(polyline: polyline)
+                renderer.strokeColor = UIColor.black.withAlphaComponent(0.25)
+                renderer.lineWidth = 1.0
                 renderer.lineCap = .round
                 polylineRenderers[polyline] = renderer
-                if dashPhaseTimer == nil {
-                    dashPhaseTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-                        guard let self = self else { return }
-                        for (_, r) in self.polylineRenderers {
-                            r.lineDashPhase += 1
-                            DispatchQueue.main.async { r.setNeedsDisplay() }
-                        }
-                    }
-                }
                 return renderer
             }
             return MKOverlayRenderer(overlay: overlay)
@@ -788,6 +783,48 @@ final class TollCalculatorViewModel: ObservableObject {
         var amount = minChargeInCents / 100.0
         if vehicleClass == "B" { amount *= 1.5 }
         return (amount, summary)
+    }
+}
+
+struct ShimmeringRoutesOverlay: View {
+    @Binding var region: MKCoordinateRegion
+    let polylines: [MKPolyline]
+    
+    var body: some View {
+        GeometryReader { geo in
+            ZStack {
+                ForEach(Array(polylines.enumerated()), id: \.offset) { _, poly in
+                    let coords = polyPoints(poly)
+                    if coords.count > 1 {
+                        Path { path in
+                            let first = mapPoint(for: coords[0], in: geo.size)
+                            path.move(to: first)
+                            for coord in coords.dropFirst() {
+                                path.addLine(to: mapPoint(for: coord, in: geo.size))
+                            }
+                        }
+                        .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                        .foregroundStyle(.black.opacity(0.35))
+                        .shimmering(active: true, duration: 1.4, bounce: false)
+                    }
+                }
+            }
+        }
+    }
+    
+    private func polyPoints(_ polyline: MKPolyline) -> [CLLocationCoordinate2D] {
+        let count = polyline.pointCount
+        var coords = Array(repeating: kCLLocationCoordinate2DInvalid, count: count)
+        polyline.getCoordinates(&coords, range: NSRange(location: 0, length: count))
+        return coords
+    }
+    
+    private func mapPoint(for coordinate: CLLocationCoordinate2D, in size: CGSize) -> CGPoint {
+        let mapRect = MKMapRect.world
+        let point = MKMapPoint(coordinate)
+        let x = (point.x / mapRect.size.width) * size.width
+        let y = (point.y / mapRect.size.height) * size.height
+        return CGPoint(x: x, y: y)
     }
 }
 struct AddressInputSheet: View {

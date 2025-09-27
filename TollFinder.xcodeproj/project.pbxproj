@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		09B7E5632E855E2600FE50EF /* ToastifySwift in Frameworks */ = {isa = PBXBuildFile; productRef = 09B7E5622E855E2600FE50EF /* ToastifySwift */; };
+		09B7E5662E87CC3400FE50EF /* Shimmer in Frameworks */ = {isa = PBXBuildFile; productRef = 09B7E5652E87CC3400FE50EF /* Shimmer */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -56,6 +57,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				09B7E5662E87CC3400FE50EF /* Shimmer in Frameworks */,
 				09B7E5632E855E2600FE50EF /* ToastifySwift in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -118,6 +120,7 @@
 			name = TollFinder;
 			packageProductDependencies = (
 				09B7E5622E855E2600FE50EF /* ToastifySwift */,
+				09B7E5652E87CC3400FE50EF /* Shimmer */,
 			);
 			productName = TollFinder;
 			productReference = 096DD8DC2E83DEAB00C914BB /* TollFinder.app */;
@@ -203,6 +206,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				09B7E5612E855E2600FE50EF /* XCRemoteSwiftPackageReference "ToastifySwift" */,
+				09B7E5642E87CC3400FE50EF /* XCRemoteSwiftPackageReference "SwiftUI-Shimmer" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 096DD8DD2E83DEAB00C914BB /* Products */;
@@ -595,6 +599,14 @@
 				minimumVersion = 1.0.3;
 			};
 		};
+		09B7E5642E87CC3400FE50EF /* XCRemoteSwiftPackageReference "SwiftUI-Shimmer" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/markiv/SwiftUI-Shimmer";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.5.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -602,6 +614,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 09B7E5612E855E2600FE50EF /* XCRemoteSwiftPackageReference "ToastifySwift" */;
 			productName = ToastifySwift;
+		};
+		09B7E5652E87CC3400FE50EF /* Shimmer */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 09B7E5642E87CC3400FE50EF /* XCRemoteSwiftPackageReference "SwiftUI-Shimmer" */;
+			productName = Shimmer;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
