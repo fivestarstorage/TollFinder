@@ -159,6 +159,10 @@ struct MapView: View {
                 onFindTolls: searchForTolls,
                 onRemoveStop: { index in
                     removeStop(at: index)
+                },
+                onStopsReordered: {
+                    updateMapAnnotations()
+                    frameAllStops()
                 }
             )
         }
@@ -294,6 +298,11 @@ struct MapView: View {
                     let address = self.formatPlacemarkAddress(placemark)
                     let coordinate = userLocation.coordinate
                     
+                    if self.activeField == nil {
+                        let targetIndex = self.stopAddresses.firstIndex(where: { $0.isEmpty }) ?? (self.stopAddresses.count - 1)
+                        self.activeField = .stop(targetIndex)
+                    }
+
                     switch self.activeField {
                     case .stop(let index):
                         if index < self.stopAddresses.count {
@@ -526,9 +535,10 @@ struct MapViewWithPolylines: UIViewRepresentable {
         mapView.isPitchEnabled = !isMapLocked
         mapView.isRotateEnabled = !isMapLocked
         
-        let existingAnnotations = mapView.annotations.filter { !($0 is MKUserLocation) }
+		let existingAnnotations = mapView.annotations.filter { !($0 is MKUserLocation) }
         mapView.removeAnnotations(existingAnnotations)
-        mapView.removeOverlays(mapView.overlays)
+		mapView.removeOverlays(mapView.overlays)
+		context.coordinator.polylineRenderers.removeAll()
         
         let mkAnnotations = annotations.map { stopAnnotation -> MKPointAnnotation in
             let annotation = MKPointAnnotation()
@@ -557,8 +567,9 @@ struct MapViewWithPolylines: UIViewRepresentable {
                 rect = rect.union(smallRect)
             }
             if !rect.isNull {
-                let insets = UIEdgeInsets(top: 80, left: 40, bottom: 200, right: 40)
-                mapView.setVisibleMapRect(rect, edgePadding: insets, animated: true)
+                let expanded = rect.insetBy(dx: -rect.size.width * 0.1, dy: -rect.size.height * 0.1)
+                let insets = UIEdgeInsets(top: 120, left: 120, bottom: 240, right: 120)
+                mapView.setVisibleMapRect(expanded, edgePadding: insets, animated: true)
             }
         } else {
             if !mkAnnotations.isEmpty && polylines.isEmpty {
@@ -569,8 +580,9 @@ struct MapViewWithPolylines: UIViewRepresentable {
                     rect = rect.union(smallRect)
                 }
                 if !rect.isNull {
-                    let insets = UIEdgeInsets(top: 80, left: 40, bottom: 200, right: 40)
-                    mapView.setVisibleMapRect(rect, edgePadding: insets, animated: true)
+                    let expanded = rect.insetBy(dx: -rect.size.width * 0.1, dy: -rect.size.height * 0.1)
+                    let insets = UIEdgeInsets(top: 120, left: 120, bottom: 240, right: 120)
+                    mapView.setVisibleMapRect(expanded, edgePadding: insets, animated: true)
                 }
             }
         }
@@ -582,6 +594,8 @@ struct MapViewWithPolylines: UIViewRepresentable {
     
     class Coordinator: NSObject, MKMapViewDelegate {
         var parent: MapViewWithPolylines
+        var polylineRenderers: [MKPolyline: MKPolylineRenderer] = [:]
+        var dashPhaseTimer: Timer?
         
         init(_ parent: MapViewWithPolylines) {
             self.parent = parent
@@ -595,7 +609,7 @@ struct MapViewWithPolylines: UIViewRepresentable {
             
             if annotationView == nil {
                 annotationView = MKAnnotationView(annotation: annotation, reuseIdentifier: identifier)
-                annotationView?.canShowCallout = true
+                annotationView?.canShowCallout = false
             } else {
                 annotationView?.annotation = annotation
             }
@@ -608,25 +622,77 @@ struct MapViewWithPolylines: UIViewRepresentable {
             circleView.layer.shadowOffset = CGSize(width: 0, height: 1)
             circleView.layer.shadowRadius = 2
             
-            let imageView = UIImageView(frame: CGRect(x: 0, y: 0, width: 12, height: 12))
-            imageView.addSubview(circleView)
-            
-            UIGraphicsBeginImageContextWithOptions(imageView.frame.size, false, 0)
-            imageView.layer.render(in: UIGraphicsGetCurrentContext()!)
-            let image = UIGraphicsGetImageFromCurrentImageContext()
-            UIGraphicsEndImageContext()
-            
+            let titleText = (annotation.title ?? "") ?? ""
+            let label = UILabel()
+            label.font = UIFont.systemFont(ofSize: 11, weight: .medium)
+            label.textColor = .black
+            label.numberOfLines = 2
+            label.textAlignment = .center
+            label.text = titleText
+            label.backgroundColor = .white
+            label.layer.cornerRadius = 6
+            label.layer.masksToBounds = true
+            label.layer.shadowColor = UIColor.black.cgColor
+            label.layer.shadowOpacity = 0.3
+            label.layer.shadowOffset = CGSize(width: 0, height: 1)
+            label.layer.shadowRadius = 2
+
+            let maxLabelWidth: CGFloat = 180
+            let labelSize = label.sizeThatFits(CGSize(width: maxLabelWidth, height: CGFloat.greatestFiniteMagnitude))
+            let paddingH: CGFloat = 8
+            let paddingV: CGFloat = 4
+            let labelW = min(maxLabelWidth, max(12, labelSize.width)) + paddingH * 2
+            let labelH = max(14, labelSize.height) + paddingV * 2
+            let dotSize: CGFloat = 12
+            let spacing: CGFloat = 6
+            let width = max(labelW, dotSize)
+            let height = labelH + spacing + dotSize
+
+            let container = UIView(frame: CGRect(x: 0, y: 0, width: width, height: height))
+            container.backgroundColor = .clear
+
+            label.frame = CGRect(x: (width - labelW) / 2, y: 0, width: labelW, height: labelH)
+
+            let dot = UIView(frame: CGRect(x: (width - dotSize) / 2, y: label.frame.maxY + spacing, width: dotSize, height: dotSize))
+            dot.backgroundColor = .black
+            dot.layer.cornerRadius = dotSize / 2
+            dot.layer.shadowColor = UIColor.black.cgColor
+            dot.layer.shadowOpacity = 0.3
+            dot.layer.shadowOffset = CGSize(width: 0, height: 1)
+            dot.layer.shadowRadius = 2
+
+            container.addSubview(label)
+            container.addSubview(dot)
+
+            let renderer = UIGraphicsImageRenderer(size: container.bounds.size)
+            let image = renderer.image { ctx in
+                container.layer.render(in: ctx.cgContext)
+            }
+
             annotationView?.image = image
-            annotationView?.centerOffset = CGPoint(x: 0, y: -6)
+            annotationView?.centerOffset = CGPoint(x: 0, y: -height / 2)
             
             return annotationView
         }
         
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let polyline = overlay as? MKPolyline {
+                if let existing = polylineRenderers[polyline] { return existing }
                 let renderer = MKPolylineRenderer(polyline: polyline)
-                renderer.strokeColor = UIColor.systemBlue
-                renderer.lineWidth = 3
+                renderer.strokeColor = UIColor.black
+                renderer.lineWidth = 1.5
+                renderer.lineDashPattern = [6, 6]
+                renderer.lineCap = .round
+                polylineRenderers[polyline] = renderer
+                if dashPhaseTimer == nil {
+                    dashPhaseTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+                        guard let self = self else { return }
+                        for (_, r) in self.polylineRenderers {
+                            r.lineDashPhase += 1
+                            DispatchQueue.main.async { r.setNeedsDisplay() }
+                        }
+                    }
+                }
                 return renderer
             }
             return MKOverlayRenderer(overlay: overlay)
@@ -662,6 +728,7 @@ struct AddressInputSheet: View {
     let onAddStop: () -> Void
     let onFindTolls: () -> Void
     let onRemoveStop: (Int) -> Void
+    let onStopsReordered: () -> Void
     
     @Environment(\.dismiss) private var dismiss
     @State private var searchTimer: Timer?
@@ -673,74 +740,55 @@ struct AddressInputSheet: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 0) {
-                addressInputSection
-                
-                useCurrentLocationButton
-                
-                if !searchResults.isEmpty {
-                    VStack(spacing: 0) {
+                List {
+                    ForEach(0..<stopAddresses.count, id: \.self) { index in
+                        stopTextField(for: index)
+                    }
+                    .onMove(perform: moveStops)
+                    
+                    Button(action: {
+                        onUseCurrentLocation()
+                    }) {
                         HStack {
-                            Text("\(searchResults.count) results found")
+                            Image(systemName: "location.fill")
                                 .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(.blue)
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 8)
-                            Spacer()
+                            Text("Use Current Location")
+                                .font(.system(size: 14, weight: .medium))
                         }
-                        .background(Color.blue.opacity(0.1))
-                        
-                        ScrollView {
-                            LazyVStack(spacing: 0) {
-                                ForEach(Array(searchResults.enumerated()), id: \.offset) { index, mapItem in
-                                    Button(action: {
-                                        onLocationSelected(mapItem)
-                                    }) {
-                                        HStack {
-                                            Image(systemName: "mappin.circle.fill")
-                                                .foregroundColor(.gray)
-                                                .font(.system(size: 20))
-                                            
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(mapItem.name ?? "Unknown Location")
-                                                    .font(.system(size: 16))
-                                                    .foregroundColor(.black)
-                                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                                
-                                                HStack {
-                                                    Text(getAddress(mapItem))
-                                                        .font(.system(size: 14))
-                                                        .foregroundColor(.gray)
-                                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                                    
-                                                    if let userLocation = userLocation {
-                                                        Text(getDistanceText(mapItem, from: userLocation))
-                                                            .font(.system(size: 12))
-                                                            .foregroundColor(.blue)
-                                                    }
-                                                }
-                                            }
-                                            
-                                            Spacer()
-                                        }
-                                        .padding(.horizontal, 16)
-                                        .padding(.vertical, 12)
-                                    }
-                                    .buttonStyle(PlainButtonStyle())
+                        .foregroundColor(.blue)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 8)
+                    }
+                    
+                    if !searchResults.isEmpty {
+                        ForEach(Array(searchResults.enumerated()), id: \.offset) { _, mapItem in
+                            Button(action: {
+                                onLocationSelected(mapItem)
+                            }) {
+                                HStack {
+                                    Image(systemName: "mappin.circle.fill")
+                                        .foregroundColor(.gray)
+                                        .font(.system(size: 20))
                                     
-                                    if index < searchResults.count - 1 {
-                                        Rectangle()
-                                            .fill(Color.gray.opacity(0.2))
-                                            .frame(height: 1)
-                                            .padding(.leading, 52)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(mapItem.name ?? "Unknown Location")
+                                            .font(.system(size: 16))
+                                            .foregroundColor(.black)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                        Text(getAddress(mapItem))
+                                            .font(.system(size: 14))
+                                            .foregroundColor(.gray)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
                                     }
                                 }
+                                .padding(.vertical, 8)
                             }
+                            .buttonStyle(PlainButtonStyle())
                         }
                     }
                 }
-                
-                
-                Spacer()
+                .environment(\.editMode, .constant(.active))
+                .listStyle(.plain)
                 
                 Button(action: {
                     onFindTolls()
@@ -783,41 +831,24 @@ struct AddressInputSheet: View {
     }
     
     private var addressInputSection: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 20) {
-                    ForEach(0..<stopAddresses.count, id: \.self) { index in
-                        Circle()
-                            .fill(Color.black)
-                            .frame(width: 8, height: 8)
-                    }
-                }
-                .padding(.leading, 16)
-                .padding(.trailing, 12)
-                
-                VStack(spacing: 12) {
-                    ForEach(0..<stopAddresses.count, id: \.self) { index in
-                        stopTextField(for: index)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 20)
-                
-                Spacer()
-                
-                addStopButton
+        List {
+            ForEach(0..<stopAddresses.count, id: \.self) { index in
+                stopTextField(for: index)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             }
+            .onMove(perform: moveStops)
         }
-        .background(Color.gray.opacity(0.05))
+        .environment(\.editMode, .constant(.active))
+        .listStyle(.plain)
     }
     
     private func stopTextField(for index: Int) -> some View {
-        HStack {
+        HStack(spacing: 8) {
             TextField(getStopPlaceholder(for: index), text: $stopAddresses[index])
                 .font(.system(size: 16))
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
-                .background(activeField == .stop(index) ? Color.blue.opacity(0.1) : Color.gray.opacity(0.1))
+                .background(Color.gray.opacity(0.1))
                 .cornerRadius(8)
                 .onTapGesture {
                     activeField = .stop(index)
@@ -829,14 +860,28 @@ struct AddressInputSheet: View {
                 }
             
             if stopAddresses.count > 2 {
-                Button(action: {
-                    removeStop(at: index)
-                }) {
-                    Image(systemName: "minus.circle.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(.gray)
+                if stopAddresses.count == 5 || index < stopAddresses.count - 1 {
+                    Button(action: {
+                        removeStop(at: index)
+                    }) {
+                        Image(systemName: "minus.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(.gray)
+                    }
                 }
-                .padding(.trailing, 8)
+            }
+            
+            if index == stopAddresses.count - 1 && stopAddresses.count < 5 {
+                Button(action: {
+                    onAddStop()
+                }) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.black)
+                        .frame(width: 32, height: 32)
+                        .background(Color.gray.opacity(0.1))
+                        .clipShape(Circle())
+                }
             }
         }
     }
@@ -888,6 +933,25 @@ struct AddressInputSheet: View {
         }
     }
     
+    private func moveStops(from source: IndexSet, to destination: Int) {
+        var dest = destination
+        if dest > stopAddresses.count { dest = stopAddresses.count }
+        while allStops.count < stopAddresses.count {
+            let coord = userLocation?.coordinate ?? CLLocationCoordinate2D(latitude: 0, longitude: 0)
+            allStops.append(RouteStop(coordinate: coord, address: "", order: allStops.count))
+        }
+        stopAddresses.move(fromOffsets: source, toOffset: dest)
+        allStops.move(fromOffsets: source, toOffset: min(dest, allStops.count))
+        for i in 0..<allStops.count {
+            allStops[i] = RouteStop(
+                coordinate: allStops[i].coordinate,
+                address: allStops[i].address,
+                order: i
+            )
+        }
+        onStopsReordered()
+    }
+
     private func performSearch(query: String) {
         guard query.count > 2 else {
             searchResults = []
@@ -901,7 +965,7 @@ struct AddressInputSheet: View {
         request.resultTypes = [.address, .pointOfInterest]
         request.region = MKCoordinateRegion(
             center: searchCenter,
-            span: MKCoordinateSpan(latitudeDelta: 0.5, longitudeDelta: 0.5)
+            span: MKCoordinateSpan(latitudeDelta: 4.0, longitudeDelta: 4.0)
         )
         
         let search = MKLocalSearch(request: request)
@@ -922,9 +986,8 @@ struct AddressInputSheet: View {
             }
             
             DispatchQueue.main.async {
-                let sortedResults = self.sortResultsByDistance(response.mapItems, userLocation: self.userLocation)
-                self.searchResults = sortedResults
-                print("Search for '\(query)' returned \(response.mapItems.count) results near your location")
+                self.searchResults = response.mapItems
+                print("Search for '\(query)' returned \(response.mapItems.count) results total")
             }
         }
     }
