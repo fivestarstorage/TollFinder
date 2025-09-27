@@ -97,7 +97,6 @@ struct MapView: View {
     @StateObject var toastManager = ToastManager()
     @State private var isMapLocked = false
     @State private var routeOverlays: [MKPolyline] = []
-    @State private var routeLines: [RouteLine] = []
     
     enum ActiveField: Equatable {
         case stop(Int)
@@ -105,43 +104,11 @@ struct MapView: View {
     
     var body: some View {
         ZStack {
-        Map(coordinateRegion: $region, interactionModes: isMapLocked ? [] : .all, showsUserLocation: true, annotationItems: mapAnnotations) { annotation in
-            MapAnnotation(coordinate: annotation.coordinate) {
-                VStack {
-                    Text(annotation.title)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.black)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.white)
-                        .cornerRadius(6)
-                        .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                    
-                    Circle()
-                        .fill(Color.black)
-                        .frame(width: 12, height: 12)
-                        .shadow(color: Color.black.opacity(0.3), radius: 2, x: 0, y: 1)
-                }
-            }
-        }
-        .overlay(
-            // Draw route lines
-            ForEach(routeLines, id: \.id) { routeLine in
-                Path { path in
-                    for (index, coordinate) in routeLine.coordinates.enumerated() {
-                        let point = coordinateToPoint(coordinate, in: region)
-                        if index == 0 {
-                            path.move(to: point)
-                        } else {
-                            path.addLine(to: point)
-                        }
-                    }
-                }
-                .stroke(Color.blue, lineWidth: 3)
-            }
+        MapViewWithPolylines(
+            region: $region,
+            isMapLocked: isMapLocked,
+            annotations: mapAnnotations,
+            polylines: routeOverlays
         )
         .ignoresSafeArea()
             
@@ -391,12 +358,10 @@ struct MapView: View {
         }
         print("updateMapAnnotations: Created \(mapAnnotations.count) annotations")
         
-        // Generate route between stops
         generateRouteBetweenStops()
     }
     
     private func frameAllStops() {
-        // Filter out stops with invalid coordinates (0,0 or empty addresses without coordinates)
         let validStops = allStops.filter { stop in
             let isValid = stop.coordinate.latitude != 0 && stop.coordinate.longitude != 0 && !stop.address.isEmpty
             if !isValid {
@@ -405,7 +370,7 @@ struct MapView: View {
             return isValid
         }
         
-        guard validStops.count > 1 else { 
+        guard validStops.count >= 1 else { 
             print("frameAllStops: Not enough valid stops (\(validStops.count) out of \(allStops.count))")
             return 
         }
@@ -416,23 +381,30 @@ struct MapView: View {
         }
         
         let coordinates = validStops.map { $0.coordinate }
-        let minLat = coordinates.map { $0.latitude }.min() ?? 0
-        let maxLat = coordinates.map { $0.latitude }.max() ?? 0
-        let minLon = coordinates.map { $0.longitude }.min() ?? 0
-        let maxLon = coordinates.map { $0.longitude }.max() ?? 0
         
-        let center = CLLocationCoordinate2D(
-            latitude: (minLat + maxLat) / 2,
-            longitude: (minLon + maxLon) / 2
-        )
+        let center: CLLocationCoordinate2D
+        let span: MKCoordinateSpan
         
-        // Add extra padding to ensure annotations fit on screen
-        let span = MKCoordinateSpan(
-            latitudeDelta: max(maxLat - minLat, 0.01) * 2.0,
-            longitudeDelta: max(maxLon - minLon, 0.01) * 2.0
-        )
+        if validStops.count == 1 {
+            center = coordinates.first!
+            span = MKCoordinateSpan(latitudeDelta: 0.02, longitudeDelta: 0.02)
+        } else {
+            let minLat = coordinates.map { $0.latitude }.min() ?? 0
+            let maxLat = coordinates.map { $0.latitude }.max() ?? 0
+            let minLon = coordinates.map { $0.longitude }.min() ?? 0
+            let maxLon = coordinates.map { $0.longitude }.max() ?? 0
+            
+            center = CLLocationCoordinate2D(
+                latitude: (minLat + maxLat) / 2,
+                longitude: (minLon + maxLon) / 2
+            )
+            
+            span = MKCoordinateSpan(
+                latitudeDelta: max(maxLat - minLat, 0.01) * 2.0,
+                longitudeDelta: max(maxLon - minLon, 0.01) * 2.0
+            )
+        }
         
-        print("frameAllStops: Bounds - minLat: \(minLat), maxLat: \(maxLat), minLon: \(minLon), maxLon: \(maxLon)")
         print("frameAllStops: Setting center to \(center.latitude), \(center.longitude) with span \(span.latitudeDelta), \(span.longitudeDelta)")
         
         DispatchQueue.main.async {
@@ -446,7 +418,6 @@ struct MapView: View {
     private func frameAllStopsAndLock() {
         frameAllStops()
         
-        // Lock the map after framing
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.1) {
             self.isMapLocked = true
             print("Map locked - interaction disabled")
@@ -470,15 +441,12 @@ struct MapView: View {
         
         guard validStops.count >= 2 else {
             routeOverlays = []
-            routeLines = []
             return
         }
         
         print("Generating routes between \(validStops.count) stops")
         routeOverlays = []
-        routeLines = []
         
-        // Create routes between consecutive stops
         for i in 0..<(validStops.count - 1) {
             let startStop = validStops[i]
             let endStop = validStops[i + 1]
@@ -502,13 +470,7 @@ struct MapView: View {
                 
                 DispatchQueue.main.async {
                     self.routeOverlays.append(route.polyline)
-                    
-                    // Convert polyline to coordinates for SwiftUI overlay
-                    let coordinates = self.polylineToCoordinates(route.polyline)
-                    let routeLine = RouteLine(id: UUID(), coordinates: coordinates)
-                    self.routeLines.append(routeLine)
-                    
-                    print("Added route segment \(i+1) -> \(i+2): \(route.distance/1000) km with \(coordinates.count) points")
+                    print("Added route segment \(i+1) -> \(i+2): \(route.distance/1000) km")
                 }
             }
         }
@@ -525,7 +487,6 @@ struct MapView: View {
     }
     
     private func coordinateToPoint(_ coordinate: CLLocationCoordinate2D, in region: MKCoordinateRegion) -> CGPoint {
-        // This is a simplified conversion - in a real app you'd want more precise conversion
         let mapRect = MKMapRect.world
         let mapPoint = MKMapPoint(coordinate)
         
@@ -533,6 +494,151 @@ struct MapView: View {
         let y = (mapPoint.y / mapRect.size.height) * UIScreen.main.bounds.height
         
         return CGPoint(x: x, y: y)
+    }
+}
+
+struct MapViewWithPolylines: UIViewRepresentable {
+    @Binding var region: MKCoordinateRegion
+    let isMapLocked: Bool
+    let annotations: [StopAnnotation]
+    let polylines: [MKPolyline]
+    
+    func makeUIView(context: Context) -> MKMapView {
+        let mapView = MKMapView()
+        mapView.delegate = context.coordinator
+        mapView.showsUserLocation = true
+        mapView.userTrackingMode = .none
+        return mapView
+    }
+    
+    func updateUIView(_ mapView: MKMapView, context: Context) {
+        let currentRegion = mapView.region
+        let regionChanged = abs(currentRegion.center.latitude - region.center.latitude) > 0.001 ||
+                           abs(currentRegion.center.longitude - region.center.longitude) > 0.001 ||
+                           abs(currentRegion.span.latitudeDelta - region.span.latitudeDelta) > 0.001 ||
+                           abs(currentRegion.span.longitudeDelta - region.span.longitudeDelta) > 0.001
+        if regionChanged {
+            mapView.setRegion(region, animated: true)
+        }
+
+        mapView.isScrollEnabled = !isMapLocked
+        mapView.isZoomEnabled = !isMapLocked
+        mapView.isPitchEnabled = !isMapLocked
+        mapView.isRotateEnabled = !isMapLocked
+        
+        let existingAnnotations = mapView.annotations.filter { !($0 is MKUserLocation) }
+        mapView.removeAnnotations(existingAnnotations)
+        mapView.removeOverlays(mapView.overlays)
+        
+        let mkAnnotations = annotations.map { stopAnnotation -> MKPointAnnotation in
+            let annotation = MKPointAnnotation()
+            annotation.coordinate = stopAnnotation.coordinate
+            annotation.title = stopAnnotation.title
+            annotation.subtitle = stopAnnotation.subtitle
+            return annotation
+        }
+        
+        if !mkAnnotations.isEmpty {
+            mapView.addAnnotations(mkAnnotations)
+        }
+        
+        if !polylines.isEmpty {
+            mapView.addOverlays(polylines)
+        }
+
+        if isMapLocked {
+            var rect = MKMapRect.null
+            for overlay in mapView.overlays {
+                rect = rect.union(overlay.boundingMapRect)
+            }
+            for annotation in mapView.annotations where !(annotation is MKUserLocation) {
+                let point = MKMapPoint(annotation.coordinate)
+                let smallRect = MKMapRect(x: point.x, y: point.y, width: 0, height: 0)
+                rect = rect.union(smallRect)
+            }
+            if !rect.isNull {
+                let insets = UIEdgeInsets(top: 80, left: 40, bottom: 200, right: 40)
+                mapView.setVisibleMapRect(rect, edgePadding: insets, animated: true)
+            }
+        } else {
+            if !mkAnnotations.isEmpty && polylines.isEmpty {
+                var rect = MKMapRect.null
+                for annotation in mapView.annotations where !(annotation is MKUserLocation) {
+                    let point = MKMapPoint(annotation.coordinate)
+                    let smallRect = MKMapRect(x: point.x, y: point.y, width: 0, height: 0)
+                    rect = rect.union(smallRect)
+                }
+                if !rect.isNull {
+                    let insets = UIEdgeInsets(top: 80, left: 40, bottom: 200, right: 40)
+                    mapView.setVisibleMapRect(rect, edgePadding: insets, animated: true)
+                }
+            }
+        }
+    }
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    class Coordinator: NSObject, MKMapViewDelegate {
+        var parent: MapViewWithPolylines
+        
+        init(_ parent: MapViewWithPolylines) {
+            self.parent = parent
+        }
+        
+        func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            guard !(annotation is MKUserLocation) else { return nil }
+            
+            let identifier = "StopAnnotation"
+            var annotationView = mapView.dequeueReusableAnnotationView(withIdentifier: identifier)
+            
+            if annotationView == nil {
+                annotationView = MKAnnotationView(annotation: annotation, reuseIdentifier: identifier)
+                annotationView?.canShowCallout = true
+            } else {
+                annotationView?.annotation = annotation
+            }
+            
+            let circleView = UIView(frame: CGRect(x: 0, y: 0, width: 12, height: 12))
+            circleView.backgroundColor = UIColor.black
+            circleView.layer.cornerRadius = 6
+            circleView.layer.shadowColor = UIColor.black.cgColor
+            circleView.layer.shadowOpacity = 0.3
+            circleView.layer.shadowOffset = CGSize(width: 0, height: 1)
+            circleView.layer.shadowRadius = 2
+            
+            let imageView = UIImageView(frame: CGRect(x: 0, y: 0, width: 12, height: 12))
+            imageView.addSubview(circleView)
+            
+            UIGraphicsBeginImageContextWithOptions(imageView.frame.size, false, 0)
+            imageView.layer.render(in: UIGraphicsGetCurrentContext()!)
+            let image = UIGraphicsGetImageFromCurrentImageContext()
+            UIGraphicsEndImageContext()
+            
+            annotationView?.image = image
+            annotationView?.centerOffset = CGPoint(x: 0, y: -6)
+            
+            return annotationView
+        }
+        
+        func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
+            if let polyline = overlay as? MKPolyline {
+                let renderer = MKPolylineRenderer(polyline: polyline)
+                renderer.strokeColor = UIColor.systemBlue
+                renderer.lineWidth = 3
+                return renderer
+            }
+            return MKOverlayRenderer(overlay: overlay)
+        }
+        
+        func mapView(_ mapView: MKMapView, regionDidChangeAnimated animated: Bool) {
+            if !parent.isMapLocked {
+                DispatchQueue.main.async {
+                    self.parent.region = mapView.region
+                }
+            }
+        }
     }
 }
 
@@ -544,10 +650,6 @@ struct StopAnnotation: Identifiable {
     let color: Color
 }
 
-struct RouteLine: Identifiable {
-    let id: UUID
-    let coordinates: [CLLocationCoordinate2D]
-}
 
 struct AddressInputSheet: View {
     @Binding var stopAddresses: [String]
