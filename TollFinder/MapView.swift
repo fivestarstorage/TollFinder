@@ -97,6 +97,7 @@ struct MapView: View {
     @StateObject var toastManager = ToastManager()
     @State private var isMapLocked = false
     @State private var routeOverlays: [MKPolyline] = []
+    @StateObject private var tollCalculator = TollCalculatorViewModel()
     
     enum ActiveField: Equatable {
         case stop(Int)
@@ -187,6 +188,10 @@ struct MapView: View {
         
         print("Route created with \(validStops.count) stops")
         print("Toll price - Car: $\(tollPrice.typeA), Truck: $\(tollPrice.typeB)")
+        
+        Task {
+            await tollCalculator.calculateTollsForRoute(stops: validStops)
+        }
     }
     
     private func getCoordinateFromAddress(_ address: String) -> CLLocationCoordinate2D? {
@@ -318,19 +323,14 @@ struct MapView: View {
                             self.allStops[index] = newStop
                             print("Updated stop \(index + 1) via current location: '\(address)' at \(coordinate.latitude), \(coordinate.longitude)")
                             
-                            if index + 1 < self.stopAddresses.count {
-                                self.activeField = .stop(index + 1)
-                            }
+                            self.searchResults = []
                         }
                         
                     case .none:
                         break
                     }
-                    
                     self.updateMapAnnotations()
                     self.frameAllStops()
-                    
-                    self.searchResults = []
                 }
             }
         }
@@ -678,10 +678,10 @@ struct MapViewWithPolylines: UIViewRepresentable {
         func mapView(_ mapView: MKMapView, rendererFor overlay: MKOverlay) -> MKOverlayRenderer {
             if let polyline = overlay as? MKPolyline {
                 if let existing = polylineRenderers[polyline] { return existing }
-                let renderer = MKPolylineRenderer(polyline: polyline)
-                renderer.strokeColor = UIColor.black
-                renderer.lineWidth = 1.5
-                renderer.lineDashPattern = [6, 6]
+            let renderer = MKPolylineRenderer(polyline: polyline)
+            renderer.strokeColor = UIColor.black
+            renderer.lineWidth = 1.0
+            renderer.lineDashPattern = [2, 2]
                 renderer.lineCap = .round
                 polylineRenderers[polyline] = renderer
                 if dashPhaseTimer == nil {
@@ -717,6 +717,79 @@ struct StopAnnotation: Identifiable {
 }
 
 
+@MainActor
+final class TollCalculatorViewModel: ObservableObject {
+    struct TollLeg: Identifiable {
+        let id = UUID()
+        let name: String
+        let amountTypeA: Double
+        let amountTypeB: Double
+    }
+
+    func calculateTollsForRoute(stops: [RouteStop]) async {
+        guard stops.count >= 2 else { return }
+        
+        for i in 0..<(stops.count - 1) {
+            let a = stops[i]
+            let b = stops[i + 1]
+            let name = "Stop \(i + 1) -> Stop \(i + 2)"
+            do {
+                let resultA = try await getTollBetween(
+                    origin: (a.latitude, a.longitude, "Stop \(i + 1)"),
+                    destination: (b.latitude, b.longitude, "Stop \(i + 2)"),
+                    vehicleClass: "A"
+                )
+                let resultB = try await getTollBetween(
+                    origin: (a.latitude, a.longitude, "Stop \(i + 1)"),
+                    destination: (b.latitude, b.longitude, "Stop \(i + 2)"),
+                    vehicleClass: "B"
+                )
+                print("Toll \(name) — \(resultA.summary): A=$\(String(format: "%.2f", resultA.amount)) B=$\(String(format: "%.2f", resultB.amount))")
+            } catch {
+                print("Toll \(name): A=$0.00 B=$0.00")
+            }
+        }
+    }
+
+    private func getTollBetween(
+        origin: (lat: Double, lng: Double, name: String),
+        destination: (lat: Double, lng: Double, name: String),
+        vehicleClass: String
+    ) async throws -> (amount: Double, summary: String) {
+        let apiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJZUVM3M2xwSkxoTlFGTk5Bb3VXYVo4MDFoeVkzSHo5Z0ZkQjJpXzRPTWFrIiwiaWF0IjoxNzU3MTM1MjY4fQ.Hb4K66Ae6wR_03Il08TeAdkbx9KK8J69D3bsL8d5zX4"
+
+        let reqBody: [String: Any] = [
+            "origin": ["lat": origin.lat, "lng": origin.lng, "name": origin.name],
+            "destination": ["lat": destination.lat, "lng": destination.lng, "name": destination.name],
+            "vehicleClass": vehicleClass,
+            "vehicleClassByMotorway": ["CCT": vehicleClass, "ED": vehicleClass, "LCT": vehicleClass, "M2": vehicleClass, "M4": vehicleClass, "M5": vehicleClass, "M7": vehicleClass, "SHB": vehicleClass, "SHT": vehicleClass],
+            "excludeToll": false,
+            "includeSteps": false,
+            "departureTime": ISO8601DateFormatter().string(from: Date())
+        ]
+
+        let url = URL(string: "https://api.transport.nsw.gov.au/v2/roads/toll_calc/route")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("apikey \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: reqBody, options: [])
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            return (0, "Toll calculation unavailable")
+        }
+
+        let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any]
+        let routes = json?["routes"] as? [[String: Any]]
+        let route = routes?.first
+        let minChargeInCents = route?["minChargeInCents"] as? Double ?? 0
+        let summary = route?["summary"] as? String ?? "Toll Route"
+        var amount = minChargeInCents / 100.0
+        if vehicleClass == "B" { amount *= 1.5 }
+        return (amount, summary)
+    }
+}
 struct AddressInputSheet: View {
     @Binding var stopAddresses: [String]
     @Binding var activeField: MapView.ActiveField?
@@ -732,6 +805,7 @@ struct AddressInputSheet: View {
     
     @Environment(\.dismiss) private var dismiss
     @State private var searchTimer: Timer?
+    @FocusState private var focusedField: MapView.ActiveField?
     
     private func getStopPlaceholder(for index: Int) -> String {
         return "Stop \(index + 1)"
@@ -790,21 +864,23 @@ struct AddressInputSheet: View {
                 .environment(\.editMode, .constant(.active))
                 .listStyle(.plain)
                 
+                let allFilled = !stopAddresses.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
                 Button(action: {
-                    onFindTolls()
+                    if allFilled { onFindTolls() }
                 }) {
                     HStack {
-                        Image(systemName: "magnifyingglass")
+                        Image(systemName: "function")
                             .font(.system(size: 16, weight: .medium))
-                        Text("Find Tolls")
+                        Text("Calculate Tolls")
                             .font(.system(size: 16, weight: .semibold))
                     }
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
-                    .background(Color.black)
+                    .background(allFilled ? Color.black : Color.gray)
                     .cornerRadius(8)
                 }
+                .disabled(!allFilled)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 34)
             }
@@ -818,6 +894,7 @@ struct AddressInputSheet: View {
                 }
             }
             .onChange(of: activeField) {
+                focusedField = activeField
                 switch activeField {
                 case .stop(let index):
                     if index < stopAddresses.count && !stopAddresses[index].isEmpty {
@@ -850,12 +927,12 @@ struct AddressInputSheet: View {
                 .padding(.vertical, 12)
                 .background(Color.gray.opacity(0.1))
                 .cornerRadius(8)
+                .focused($focusedField, equals: .stop(index))
                 .onTapGesture {
                     activeField = .stop(index)
                 }
                 .onChange(of: stopAddresses[index]) {
                     activeField = .stop(index)
-                    print("Text changed for stop \(index + 1): '\(stopAddresses[index])'")
                     debounceSearch(query: stopAddresses[index])
                 }
             
