@@ -98,7 +98,24 @@ struct MapView: View {
     @StateObject var toastManager = ToastManager()
     @State private var isMapLocked = false
     @State private var routeOverlays: [MKPolyline] = []
+    @State private var shouldUnlockOnDismiss = true
+    @State private var isCalculatingTolls = false
+    @State private var showTollCard = false
+    @State private var tollSummaryText = ""
+    @State private var tollAmountA: Double = 0
+    @State private var tollAmountB: Double = 0
+    @State private var didFitOnce = false
+    @State private var showSaveSheet = false
+    @State private var savedTollName = ""
+    @State private var showSaveSuccess = false
+    @State private var isTollSaved = false
     @StateObject private var tollCalculator = TollCalculatorViewModel()
+    @State private var routeEndpoints: [(start: CLLocationCoordinate2D, end: CLLocationCoordinate2D)] = []
+    @State private var showSavedList = false
+    @State private var savedTolls: [SavedToll] = []
+    @State private var showTopBanner = false
+    @State private var topBannerMessage = ""
+    @State private var topBannerColor = Color.green
     
     enum ActiveField: Hashable {
         case stop(Int)
@@ -110,15 +127,30 @@ struct MapView: View {
             region: $region,
             isMapLocked: isMapLocked,
             annotations: mapAnnotations,
-            polylines: routeOverlays
+            polylines: routeOverlays,
+            didFitOnce: $didFitOnce
         )
         .ignoresSafeArea()
         .overlay(
-            ShimmeringRoutesOverlay(region: $region, polylines: routeOverlays)
+            ShimmeringRoutesOverlay(region: $region, polylines: routeOverlays, endpoints: routeEndpoints)
                 .allowsHitTesting(false)
         )
             
             VStack {
+                HStack {
+                    Spacer()
+                    Button(action: { showSavedList = true }) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.black)
+                            .padding(10)
+                            .background(Color.white)
+                            .cornerRadius(8)
+                            .shadow(color: Color.black.opacity(0.15), radius: 4, x: 0, y: 2)
+                    }
+                    .padding(.trailing, 16)
+                    .padding(.top, 12)
+                }
                 Spacer()
                 
                 Button(action: {
@@ -141,6 +173,94 @@ struct MapView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 34)
             }
+
+            if showTopBanner {
+                VStack {
+                    HStack {
+                        Text(topBannerMessage)
+                            .foregroundColor(.white)
+                            .font(.system(size: 14, weight: .semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(topBannerColor)
+                            .cornerRadius(8)
+                        Spacer()
+                    }
+                    .padding(.top, 12)
+                    .padding(.horizontal, 16)
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+
+            if showTollCard {
+                VStack {
+                    Spacer()
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Tolls Summary")
+                                .font(.system(size: 18, weight: .semibold))
+                            Spacer()
+                            Button(action: {
+                                showTollCard = false
+                                isMapLocked = false
+                                shouldUnlockOnDismiss = true
+                                stopAddresses = ["", ""]
+                                allStops = []
+                                mapAnnotations = []
+                                routeOverlays = []
+                                currentRoute = nil
+                                searchResults = []
+                            }) {
+                                Image(systemName: "xmark")
+                                    .foregroundColor(.black)
+                            }
+                        }
+                        Text(tollSummaryText)
+                            .font(.system(size: 14))
+                            .foregroundColor(.gray)
+                        HStack {
+                            Text("Class A: $\(String(format: "%.2f", tollAmountA))")
+                                .font(.system(size: 16, weight: .medium))
+                            Spacer()
+                            Text("Class B: $\(String(format: "%.2f", tollAmountB))")
+                                .font(.system(size: 16, weight: .medium))
+                        }
+                        HStack {
+                            Button(action: {
+                                if isTollSaved {
+                                    isTollSaved = false
+                                    topBannerMessage = "Toll unsaved"
+                                    topBannerColor = .orange
+                                    withAnimation { showTopBanner = true }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { withAnimation { showTopBanner = false } }
+                                } else {
+                                    showSaveSheet = true
+                                }
+                            }) {
+                                Image(systemName: isTollSaved ? "heart.fill" : "heart")
+                                    .foregroundColor(.black)
+                            }
+                            Spacer()
+                            Button(action: {
+                                shouldUnlockOnDismiss = true
+                                showingAddressInput = true
+                            }) {
+                                Text("Edit")
+                                    .foregroundColor(.blue)
+                                    .font(.system(size: 15, weight: .medium))
+                            }
+                        }
+                    }
+                    .padding(16)
+                    .background(Color.white)
+                    .cornerRadius(12)
+                    .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 4)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 34)
+                }
+                .transition(.move(edge: .bottom))
+            }
         }
         .onAppear {
             locationManager.requestLocationPermission()
@@ -151,7 +271,7 @@ struct MapView: View {
             }
         }
         .sheet(isPresented: $showingAddressInput, onDismiss: {
-            unlockMap()
+            if shouldUnlockOnDismiss { unlockMap() } else { shouldUnlockOnDismiss = true }
         }) {
             AddressInputSheet(
                 stopAddresses: $stopAddresses,
@@ -169,10 +289,85 @@ struct MapView: View {
                 onStopsReordered: {
                     updateMapAnnotations()
                     frameAllStops()
-                }
+                },
+                isCalculatingTolls: $isCalculatingTolls
             )
         }
-        .toastify(using: toastManager)
+        .toastify(using: toastManager, position: .top)
+        .sheet(isPresented: $showSaveSheet) {
+            VStack(spacing: 16) {
+                Capsule()
+                    .fill(Color.gray.opacity(0.3))
+                    .frame(width: 40, height: 5)
+                    .padding(.top, 8)
+                Text("Name this toll")
+                    .font(.system(size: 16, weight: .semibold))
+                TextField("Toll name", text: $savedTollName)
+                    .padding(12)
+                    .background(Color.gray.opacity(0.1))
+                    .cornerRadius(8)
+                    .padding(.horizontal, 16)
+                Button(action: {
+                    isTollSaved = true
+                    let toll = SavedToll(id: UUID(), name: savedTollName.isEmpty ? "Saved Toll" : savedTollName, summary: tollSummaryText, totalA: tollAmountA, totalB: tollAmountB)
+                    savedTolls.append(toll)
+                    showSaveSheet = false
+                    showSaveSuccess = true
+                    toastManager.show(toast: ToastModel(
+                        message: "Toll saved successfully!",
+                        icon: "checkmark.circle.fill",
+                        backgroundColor: .green,
+                        duration: 1.5
+                    ))
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                        showSaveSuccess = false
+                    }
+                }) {
+                    Text("Save Toll")
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 48)
+                        .background(Color.black)
+                        .cornerRadius(8)
+                        .padding(.horizontal, 16)
+                }
+                Spacer(minLength: 16)
+            }
+            .presentationDetents([.height(220)])
+        }
+        .sheet(isPresented: $showSavedList) {
+            NavigationView {
+                List {
+                    ForEach(savedTolls) { toll in
+                        Button(action: {
+                            showSavedList = false
+                            tollSummaryText = toll.summary
+                            tollAmountA = toll.totalA
+                            tollAmountB = toll.totalB
+                            isTollSaved = true
+                            showTollCard = true
+                        }) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(toll.name)
+                                    .font(.system(size: 16, weight: .semibold))
+                                Text(toll.summary)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.gray)
+                                HStack {
+                                    Text("A $\(String(format: "%.2f", toll.totalA))")
+                                    Text("B $\(String(format: "%.2f", toll.totalB))")
+                                }
+                                .font(.system(size: 13, weight: .medium))
+                            }
+                            .padding(.vertical, 6)
+                        }
+                    }
+                }
+                .navigationTitle("Saved Tolls")
+                .navigationBarTitleDisplayMode(.inline)
+            }
+            .presentationDetents([.medium, .large])
+        }
     }
     
     private func centerOnUserLocation() {
@@ -187,15 +382,24 @@ struct MapView: View {
         let validStops = allStops.filter { !$0.address.isEmpty }
         guard validStops.count >= 2 else { return }
         
+        isCalculatingTolls = true
         let tollPrice = calculateTollPrice(for: validStops)
         currentRoute = Route(stops: validStops, tollPrice: tollPrice)
-        showingAddressInput = false
-        
         print("Route created with \(validStops.count) stops")
         print("Toll price - Car: $\(tollPrice.typeA), Truck: $\(tollPrice.typeB)")
         
         Task {
-            await tollCalculator.calculateTollsForRoute(stops: validStops)
+            let result = await tollCalculator.calculateTollsSummary(stops: validStops)
+            tollSummaryText = result.summary
+            tollAmountA = result.totalA
+            tollAmountB = result.totalB
+            isCalculatingTolls = false
+            frameAllStops()
+            isMapLocked = true
+            shouldUnlockOnDismiss = false
+            didFitOnce = false
+            showingAddressInput = false
+            showTollCard = true
         }
     }
     
@@ -460,6 +664,7 @@ struct MapView: View {
         
         print("Generating routes between \(validStops.count) stops")
         routeOverlays = []
+        routeEndpoints = []
         
         for i in 0..<(validStops.count - 1) {
             let startStop = validStops[i]
@@ -484,6 +689,7 @@ struct MapView: View {
                 
                 DispatchQueue.main.async {
                     self.routeOverlays.append(route.polyline)
+                    self.routeEndpoints.append((start: startStop.coordinate, end: endStop.coordinate))
                     print("Added route segment \(i+1) -> \(i+2): \(route.distance/1000) km")
                 }
             }
@@ -516,6 +722,7 @@ struct MapViewWithPolylines: UIViewRepresentable {
     let isMapLocked: Bool
     let annotations: [StopAnnotation]
     let polylines: [MKPolyline]
+    @Binding var didFitOnce: Bool
     
     func makeUIView(context: Context) -> MKMapView {
         let mapView = MKMapView()
@@ -571,10 +778,11 @@ struct MapViewWithPolylines: UIViewRepresentable {
                 let smallRect = MKMapRect(x: point.x, y: point.y, width: 0, height: 0)
                 rect = rect.union(smallRect)
             }
-            if !rect.isNull {
+            if !rect.isNull && !didFitOnce {
                 let expanded = rect.insetBy(dx: -rect.size.width * 0.1, dy: -rect.size.height * 0.1)
                 let insets = UIEdgeInsets(top: 120, left: 120, bottom: 240, right: 120)
                 mapView.setVisibleMapRect(expanded, edgePadding: insets, animated: true)
+                didFitOnce = true
             }
         } else {
             if !mkAnnotations.isEmpty && polylines.isEmpty {
@@ -584,10 +792,11 @@ struct MapViewWithPolylines: UIViewRepresentable {
                     let smallRect = MKMapRect(x: point.x, y: point.y, width: 0, height: 0)
                     rect = rect.union(smallRect)
                 }
-                if !rect.isNull {
+                if !rect.isNull && !didFitOnce {
                     let expanded = rect.insetBy(dx: -rect.size.width * 0.1, dy: -rect.size.height * 0.1)
                     let insets = UIEdgeInsets(top: 120, left: 120, bottom: 240, right: 120)
                     mapView.setVisibleMapRect(expanded, edgePadding: insets, animated: true)
+                    didFitOnce = true
                 }
             }
         }
@@ -685,7 +894,7 @@ struct MapViewWithPolylines: UIViewRepresentable {
                 if let existing = polylineRenderers[polyline] { return existing }
                 let renderer = MKPolylineRenderer(polyline: polyline)
                 renderer.strokeColor = UIColor.black.withAlphaComponent(0.25)
-                renderer.lineWidth = 1.0
+                renderer.lineWidth = 4
                 renderer.lineCap = .round
                 polylineRenderers[polyline] = renderer
                 return renderer
@@ -746,6 +955,35 @@ final class TollCalculatorViewModel: ObservableObject {
         }
     }
 
+    func calculateTollsSummary(stops: [RouteStop]) async -> (summary: String, totalA: Double, totalB: Double) {
+        guard stops.count >= 2 else { return ("", 0, 0) }
+        var totalA: Double = 0
+        var totalB: Double = 0
+        var lastSummary: String = ""
+        for i in 0..<(stops.count - 1) {
+            let a = stops[i]
+            let b = stops[i + 1]
+            do {
+                let resultA = try await getTollBetween(
+                    origin: (a.latitude, a.longitude, "Stop \(i + 1)"),
+                    destination: (b.latitude, b.longitude, "Stop \(i + 2)"),
+                    vehicleClass: "A"
+                )
+                let resultB = try await getTollBetween(
+                    origin: (a.latitude, a.longitude, "Stop \(i + 1)"),
+                    destination: (b.latitude, b.longitude, "Stop \(i + 2)"),
+                    vehicleClass: "B"
+                )
+                totalA += resultA.amount
+                totalB += resultB.amount
+                lastSummary = resultA.summary
+            } catch {
+                continue
+            }
+        }
+        return (lastSummary, totalA, totalB)
+    }
+
     private func getTollBetween(
         origin: (lat: Double, lng: Double, name: String),
         destination: (lat: Double, lng: Double, name: String),
@@ -786,15 +1024,24 @@ final class TollCalculatorViewModel: ObservableObject {
     }
 }
 
+struct SavedToll: Identifiable, Equatable {
+    let id: UUID
+    var name: String
+    var summary: String
+    var totalA: Double
+    var totalB: Double
+}
+
 struct ShimmeringRoutesOverlay: View {
     @Binding var region: MKCoordinateRegion
     let polylines: [MKPolyline]
+    let endpoints: [(start: CLLocationCoordinate2D, end: CLLocationCoordinate2D)]
     
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                ForEach(Array(polylines.enumerated()), id: \.offset) { _, poly in
-                    let coords = polyPoints(poly)
+                ForEach(Array(polylines.enumerated()), id: \.offset) { idx, poly in
+                    let coords = orderedPolylineCoords(poly, index: idx)
                     if coords.count > 1 {
                         Path { path in
                             let first = mapPoint(for: coords[0], in: geo.size)
@@ -803,8 +1050,8 @@ struct ShimmeringRoutesOverlay: View {
                                 path.addLine(to: mapPoint(for: coord, in: geo.size))
                             }
                         }
-                        .stroke(style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                        .foregroundStyle(.black.opacity(0.35))
+                        .stroke(style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .foregroundStyle(.black.opacity(0.5))
                         .shimmering(active: true, duration: 1.4, bounce: false)
                     }
                 }
@@ -819,12 +1066,50 @@ struct ShimmeringRoutesOverlay: View {
         return coords
     }
     
+    private func orderedPolylineCoords(_ polyline: MKPolyline, index: Int) -> [CLLocationCoordinate2D] {
+        var coords = polyPoints(polyline)
+        guard coords.count > 1 else { return coords }
+        if index < endpoints.count {
+            let desiredStart = endpoints[index].start
+            if let startIdx = coords.enumerated().min(by: { lhs, rhs in
+                distanceSquared(lhs.element, desiredStart) < distanceSquared(rhs.element, desiredStart)
+            })?.offset, startIdx != 0 {
+                coords = Array(coords[startIdx...] + coords[..<startIdx])
+            }
+        }
+        return coords
+    }
+    
     private func mapPoint(for coordinate: CLLocationCoordinate2D, in size: CGSize) -> CGPoint {
-        let mapRect = MKMapRect.world
+        let rect = regionMapRect(region)
         let point = MKMapPoint(coordinate)
-        let x = (point.x / mapRect.size.width) * size.width
-        let y = (point.y / mapRect.size.height) * size.height
+        let x = ((point.x - rect.origin.x) / rect.size.width) * size.width
+        let y = ((point.y - rect.origin.y) / rect.size.height) * size.height
         return CGPoint(x: x, y: y)
+    }
+
+    private func lastLongitudeLessThan(_ first: CLLocationCoordinate2D, _ last: CLLocationCoordinate2D) -> Bool {
+        return last.longitude < first.longitude
+    }
+
+    private func distanceSquared(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> Double {
+        let dx = a.latitude - b.latitude
+        let dy = a.longitude - b.longitude
+        return dx*dx + dy*dy
+    }
+
+    private func regionMapRect(_ region: MKCoordinateRegion) -> MKMapRect {
+        let center = region.center
+        let span = region.span
+        let north = center.latitude + span.latitudeDelta / 2
+        let south = center.latitude - span.latitudeDelta / 2
+        let west = center.longitude - span.longitudeDelta / 2
+        let east = center.longitude + span.longitudeDelta / 2
+        let nw = MKMapPoint(CLLocationCoordinate2D(latitude: north, longitude: west))
+        let se = MKMapPoint(CLLocationCoordinate2D(latitude: south, longitude: east))
+        let origin = MKMapPoint(x: min(nw.x, se.x), y: min(nw.y, se.y))
+        let size = MKMapSize(width: abs(se.x - nw.x), height: abs(se.y - nw.y))
+        return MKMapRect(origin: origin, size: size)
     }
 }
 struct AddressInputSheet: View {
@@ -839,6 +1124,7 @@ struct AddressInputSheet: View {
     let onFindTolls: () -> Void
     let onRemoveStop: (Int) -> Void
     let onStopsReordered: () -> Void
+    @Binding var isCalculatingTolls: Bool
     
     @Environment(\.dismiss) private var dismiss
     @State private var searchTimer: Timer?
@@ -905,10 +1191,15 @@ struct AddressInputSheet: View {
                 Button(action: {
                     if allFilled { onFindTolls() }
                 }) {
-                    HStack {
-                        Image(systemName: "function")
-                            .font(.system(size: 16, weight: .medium))
-                        Text("Calculate Tolls")
+                    HStack(spacing: 10) {
+                        if isCalculatingTolls {
+                            ProgressView()
+                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        } else {
+                            Image(systemName: "function")
+                                .font(.system(size: 16, weight: .medium))
+                        }
+                        Text(isCalculatingTolls ? "Calculating..." : "Calculate Tolls")
                             .font(.system(size: 16, weight: .semibold))
                     }
                     .foregroundColor(.white)
@@ -917,7 +1208,7 @@ struct AddressInputSheet: View {
                     .background(allFilled ? Color.black : Color.gray)
                     .cornerRadius(8)
                 }
-                .disabled(!allFilled)
+                .disabled(!allFilled || isCalculatingTolls)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 34)
             }
@@ -1072,14 +1363,13 @@ struct AddressInputSheet: View {
             return
         }
         
-        let searchCenter = userLocation?.coordinate ?? CLLocationCoordinate2D(latitude: -33.8688, longitude: 151.2093)
-        
+        let nswCenter = CLLocationCoordinate2D(latitude: -32.0, longitude: 147.0)
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = query
         request.resultTypes = [.address, .pointOfInterest]
         request.region = MKCoordinateRegion(
-            center: searchCenter,
-            span: MKCoordinateSpan(latitudeDelta: 4.0, longitudeDelta: 4.0)
+            center: nswCenter,
+            span: MKCoordinateSpan(latitudeDelta: 10.0, longitudeDelta: 12.0)
         )
         
         let search = MKLocalSearch(request: request)
@@ -1100,8 +1390,12 @@ struct AddressInputSheet: View {
             }
             
             DispatchQueue.main.async {
-                self.searchResults = response.mapItems
-                print("Search for '\(query)' returned \(response.mapItems.count) results total")
+                let filtered = response.mapItems.filter { item in
+                    let area = (item.placemark.administrativeArea ?? "").uppercased()
+                    return area.contains("NSW") || area.contains("NEW SOUTH WALES")
+                }
+                self.searchResults = filtered
+                print("Search for '\(query)' returned \(filtered.count) NSW results")
             }
         }
     }
