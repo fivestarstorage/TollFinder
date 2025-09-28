@@ -51,7 +51,6 @@ struct AddressInputSheet: View {
                         }
                     }
                 }
-                .environment(\.editMode, .constant(.active))
                 .listStyle(.plain)
                 let allValid = (0..<stopAddresses.count).allSatisfy { idx in
                     let txt = stopAddresses[idx].trimmingCharacters(in: .whitespacesAndNewlines)
@@ -75,7 +74,19 @@ struct AddressInputSheet: View {
                 .padding(.bottom, 34)
             }
             .navigationTitle("Plan your trip").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .navigationBarLeading) { Button("Cancel") { dismiss() } } }
+            .toolbar { 
+                ToolbarItem(placement: .navigationBarLeading) { 
+                    Button("Cancel") { dismiss() } 
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: { onAddStop() }) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.black)
+                    }
+                    .disabled(stopAddresses.count >= 5)
+                }
+            }
             .onChange(of: activeField) {
                 focusedField = activeField
                 switch activeField { case .stop(let index): if index < stopAddresses.count && !stopAddresses[index].isEmpty { performSearch(query: stopAddresses[index]) }; case .none: break }
@@ -83,7 +94,35 @@ struct AddressInputSheet: View {
         }
     }
     private var addressInputSection: some View { List { ForEach(0..<stopAddresses.count, id: \.self) { index in stopTextField(for: index).listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16)) } .onMove(perform: moveStops) }.environment(\.editMode, .constant(.active)).listStyle(.plain) }
-    private func stopTextField(for index: Int) -> some View { HStack(spacing: 8) { TextField(getStopPlaceholder(for: index), text: $stopAddresses[index]).font(.system(size: 16)).padding(.horizontal, 16).padding(.vertical, 12).background(Color.gray.opacity(0.1)).cornerRadius(8).focused($focusedField, equals: .stop(index)).onTapGesture { activeField = .stop(index) }.onChange(of: stopAddresses[index]) { activeField = .stop(index); debounceSearch(query: stopAddresses[index]) } ; if stopAddresses.count > 2 { if stopAddresses.count == 5 || index < stopAddresses.count - 1 { Button(action: { removeStop(at: index) }) { Image(systemName: "minus.circle.fill").font(.system(size: 20)).foregroundColor(.gray) } } } ; if index == stopAddresses.count - 1 && stopAddresses.count < 5 { Button(action: { onAddStop() }) { Image(systemName: "plus").font(.system(size: 16, weight: .medium)).foregroundColor(.black).frame(width: 32, height: 32).background(Color.gray.opacity(0.1)).clipShape(Circle()) } } } }
+    private func stopTextField(for index: Int) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 16))
+                .foregroundColor(.gray)
+                .frame(width: 20)
+            
+            TextField(getStopPlaceholder(for: index), text: $stopAddresses[index])
+                .font(.system(size: 16))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(Color.gray.opacity(0.1))
+                .cornerRadius(8)
+                .focused($focusedField, equals: .stop(index))
+                .onTapGesture { activeField = .stop(index) }
+                .onChange(of: stopAddresses[index]) { 
+                    activeField = .stop(index)
+                    debounceSearch(query: stopAddresses[index]) 
+                }
+            
+            if stopAddresses.count > 2 {
+                Button(action: { removeStop(at: index) }) {
+                    Image(systemName: "minus.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(.gray)
+                }
+            }
+        }
+    }
     private func removeStop(at index: Int) { onRemoveStop(index) }
     private var addStopButton: some View { Button(action: { onAddStop() }) { Image(systemName: "plus").font(.system(size: 16, weight: .medium)).foregroundColor(.black).frame(width: 32, height: 32).background(Color.gray.opacity(0.1)).clipShape(Circle()) }.padding(.trailing, 16) }
     private var useCurrentLocationButton: some View { Button(action: { onUseCurrentLocation() }) { HStack { Image(systemName: "location.fill").font(.system(size: 14, weight: .medium)); Text("Use Current Location").font(.system(size: 14, weight: .medium)) }.foregroundColor(.blue).frame(maxWidth: .infinity).padding(.vertical, 12).background(Color.blue.opacity(0.1)).cornerRadius(8) }.padding(.horizontal, 16).padding(.vertical, 8) }

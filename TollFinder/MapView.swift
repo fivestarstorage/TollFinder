@@ -91,6 +91,11 @@ struct MapView: View {
                 Button(action: {
                     print("Find Tolls button pressed - current stops: \(allStops.count)")
                     frameAllStopsAndLock()
+                    
+                    // Find the first empty stop and set it as active
+                    let firstEmptyIndex = stopAddresses.firstIndex { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? 0
+                    activeField = .stop(firstEmptyIndex)
+                    
                     showingAddressInput = true
                 }) {
                     HStack {
