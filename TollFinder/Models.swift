@@ -1,6 +1,8 @@
 import SwiftUI
 import MapKit
 import CoreLocation
+import Combine
+import CoreData
 
 struct RouteStop: Identifiable, Codable {
     let id = UUID()
@@ -84,6 +86,82 @@ struct SavedToll: Identifiable {
     var totalA: Double
     var totalB: Double
     var stops: [RouteStop]
+}
+
+@MainActor
+final class SavedTollStore: ObservableObject {
+    static let shared = SavedTollStore()
+    @Published var items: [SavedToll] = []
+    private var context: NSManagedObjectContext { PersistenceController.shared.container.viewContext }
+    func load() {
+        guard NSEntityDescription.entity(forEntityName: "SavedTollEntity", in: context) != nil,
+              NSEntityDescription.entity(forEntityName: "SavedStopEntity", in: context) != nil else { return }
+        let req = NSFetchRequest<NSManagedObject>(entityName: "SavedTollEntity")
+        do {
+            let tollEntities = try context.fetch(req)
+            items = tollEntities.compactMap { toll in
+                guard let id = toll.value(forKey: "id") as? UUID,
+                      let name = toll.value(forKey: "name") as? String,
+                      let summary = toll.value(forKey: "summary") as? String else { return nil }
+                let totalA = toll.value(forKey: "totalA") as? Double ?? 0
+                let totalB = toll.value(forKey: "totalB") as? Double ?? 0
+                let relation = toll.value(forKey: "stops") as? NSSet
+                let stopsArray = (relation?.allObjects as? [NSManagedObject] ?? []).sorted { a, b in
+                    let oa = a.value(forKey: "orderIndex") as? Int16 ?? 0
+                    let ob = b.value(forKey: "orderIndex") as? Int16 ?? 0
+                    return oa < ob
+                }.map { s in
+                    let lat = s.value(forKey: "latitude") as? Double ?? 0
+                    let lon = s.value(forKey: "longitude") as? Double ?? 0
+                    let addr = s.value(forKey: "address") as? String ?? ""
+                    let ord = Int(s.value(forKey: "orderIndex") as? Int16 ?? 0)
+                    return RouteStop(coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lon), address: addr, order: ord)
+                }
+                return SavedToll(id: id, name: name, summary: summary, totalA: totalA, totalB: totalB, stops: stopsArray)
+            }
+        } catch {}
+    }
+    func saveOrUpdate(toll: SavedToll) {
+        guard NSEntityDescription.entity(forEntityName: "SavedTollEntity", in: context) != nil,
+              NSEntityDescription.entity(forEntityName: "SavedStopEntity", in: context) != nil else { return }
+        let fetch = NSFetchRequest<NSManagedObject>(entityName: "SavedTollEntity")
+        fetch.predicate = NSPredicate(format: "id == %@", toll.id as CVarArg)
+        let tollEntity: NSManagedObject
+        if let existing = ((try? context.fetch(fetch))?.first) {
+            tollEntity = existing
+        } else {
+            let entity = NSEntityDescription.entity(forEntityName: "SavedTollEntity", in: context)!
+            tollEntity = NSManagedObject(entity: entity, insertInto: context)
+            tollEntity.setValue(toll.id, forKey: "id")
+        }
+        tollEntity.setValue(toll.name, forKey: "name")
+        tollEntity.setValue(toll.summary, forKey: "summary")
+        tollEntity.setValue(toll.totalA, forKey: "totalA")
+        tollEntity.setValue(toll.totalB, forKey: "totalB")
+        let currentStops = tollEntity.mutableSetValue(forKey: "stops")
+        currentStops.removeAllObjects()
+        for s in toll.stops {
+            let stopEntity = NSEntityDescription.insertNewObject(forEntityName: "SavedStopEntity", into: context)
+            stopEntity.setValue(Double(s.latitude), forKey: "latitude")
+            stopEntity.setValue(Double(s.longitude), forKey: "longitude")
+            stopEntity.setValue(s.address, forKey: "address")
+            stopEntity.setValue(Int16(s.order), forKey: "orderIndex")
+            currentStops.add(stopEntity)
+        }
+        tollEntity.setValue(currentStops, forKey: "stops")
+        try? context.save()
+        if let idx = items.firstIndex(where: { $0.id == toll.id }) { items[idx] = toll } else { items.append(toll) }
+    }
+    func delete(id: UUID) {
+        guard NSEntityDescription.entity(forEntityName: "SavedTollEntity", in: context) != nil else { return }
+        let fetch = NSFetchRequest<NSManagedObject>(entityName: "SavedTollEntity")
+        fetch.predicate = NSPredicate(format: "id == %@", id as CVarArg)
+        if let entity = ((try? context.fetch(fetch))?.first) {
+            context.delete(entity)
+            try? context.save()
+        }
+        items.removeAll { $0.id == id }
+    }
 }
 
 

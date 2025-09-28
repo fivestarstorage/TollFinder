@@ -192,6 +192,8 @@ struct MapView: View {
         }
         .onAppear {
             locationManager.requestLocationPermission()
+            SavedTollStore.shared.load()
+            savedTolls = SavedTollStore.shared.items
         }
         .onChange(of: locationManager.userLocation) {
             if let location = locationManager.userLocation {
@@ -239,6 +241,8 @@ struct MapView: View {
                     isTollSaved = true
                     let toll = SavedToll(id: UUID(), name: savedTollName.isEmpty ? "Saved Toll" : savedTollName, summary: tollSummaryText, totalA: tollAmountA, totalB: tollAmountB, stops: allStops)
                     savedTolls.append(toll)
+                    SavedTollStore.shared.saveOrUpdate(toll: toll)
+                    savedTolls = SavedTollStore.shared.items
                     showSaveSheet = false
                     showSaveSuccess = true
                     toastManager.show(toast: ToastModel(
@@ -307,7 +311,8 @@ struct MapView: View {
                         }
                     }
                     .onDelete { indexSet in
-                        savedTolls.remove(atOffsets: indexSet)
+                        for idx in indexSet { SavedTollStore.shared.delete(id: savedTolls[idx].id) }
+                        savedTolls = SavedTollStore.shared.items
                     }
                 }
                 .navigationTitle("Saved Tolls")
@@ -345,6 +350,8 @@ struct MapView: View {
                 savedTolls[idx].totalA = tollAmountA
                 savedTolls[idx].totalB = tollAmountB
                 savedTolls[idx].stops = validStops
+                SavedTollStore.shared.saveOrUpdate(toll: savedTolls[idx])
+                savedTolls = SavedTollStore.shared.items
             }
             isCalculatingTolls = false
             frameAllStops()
