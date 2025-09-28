@@ -1,0 +1,38 @@
+{
+  "configurations" : [
+    {
+      "id" : "37A5550F-0059-4536-97E5-41AA3E1338E4",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:TollFinder.xcodeproj",
+      "identifier" : "096DD8DB2E83DEAB00C914BB",
+      "name" : "TollFinder"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:TollFinder.xcodeproj",
+        "identifier" : "096DD8ED2E83DEAC00C914BB",
+        "name" : "TollFinderTests"
+      }
+    },
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:TollFinder.xcodeproj",
+        "identifier" : "096DD8F72E83DEAC00C914BB",
+        "name" : "TollFinderUITests"
+      }
+    }
+  ],
+  "version" : 1
+}
