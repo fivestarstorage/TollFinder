@@ -32,6 +32,7 @@
 		096DD8DC2E83DEAB00C914BB /* TollFinder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TollFinder.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		096DD8EE2E83DEAC00C914BB /* TollFinderTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TollFinderTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		096DD8F82E83DEAC00C914BB /* TollFinderUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TollFinderUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		09B7E59F2E88E89F00FE50EF /* TollFinder.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = TollFinder.xctestplan; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -82,6 +83,7 @@
 		096DD8D32E83DEAB00C914BB = {
 			isa = PBXGroup;
 			children = (
+				09B7E59F2E88E89F00FE50EF /* TollFinder.xctestplan */,
 				096DD8DE2E83DEAB00C914BB /* TollFinder */,
 				096DD8F12E83DEAC00C914BB /* TollFinderTests */,
 				096DD8FB2E83DEAC00C914BB /* TollFinderUITests */,
