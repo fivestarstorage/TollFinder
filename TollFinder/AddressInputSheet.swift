@@ -53,8 +53,13 @@ struct AddressInputSheet: View {
                 }
                 .environment(\.editMode, .constant(.active))
                 .listStyle(.plain)
-                let allFilled = !stopAddresses.contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                Button(action: { if allFilled { onFindTolls() } }) {
+                let allValid = (0..<stopAddresses.count).allSatisfy { idx in
+                    let txt = stopAddresses[idx].trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !txt.isEmpty, idx < allStops.count else { return false }
+                    let s = allStops[idx]
+                    return !s.address.isEmpty && s.latitude != 0 && s.longitude != 0
+                }
+                Button(action: { if allValid { onFindTolls() } }) {
                     HStack(spacing: 10) {
                         if isCalculatingTolls { ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white)) } else { Image(systemName: "function").font(.system(size: 16, weight: .medium)) }
                         Text(isCalculatingTolls ? "Calculating..." : "Calculate Tolls").font(.system(size: 16, weight: .semibold))
@@ -62,10 +67,10 @@ struct AddressInputSheet: View {
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 50)
-                    .background(allFilled ? Color.black : Color.gray)
+                    .background(allValid ? Color.black : Color.gray)
                     .cornerRadius(8)
                 }
-                .disabled(!allFilled || isCalculatingTolls)
+                .disabled(!allValid || isCalculatingTolls)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 34)
             }

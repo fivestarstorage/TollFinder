@@ -123,7 +123,10 @@ final class SavedTollStore: ObservableObject {
     }
     func saveOrUpdate(toll: SavedToll) {
         guard NSEntityDescription.entity(forEntityName: "SavedTollEntity", in: context) != nil,
-              NSEntityDescription.entity(forEntityName: "SavedStopEntity", in: context) != nil else { return }
+              NSEntityDescription.entity(forEntityName: "SavedStopEntity", in: context) != nil else {
+            if let idx = items.firstIndex(where: { $0.id == toll.id }) { items[idx] = toll } else { items.append(toll) }
+            return
+        }
         let fetch = NSFetchRequest<NSManagedObject>(entityName: "SavedTollEntity")
         fetch.predicate = NSPredicate(format: "id == %@", toll.id as CVarArg)
         let tollEntity: NSManagedObject
@@ -153,7 +156,10 @@ final class SavedTollStore: ObservableObject {
         if let idx = items.firstIndex(where: { $0.id == toll.id }) { items[idx] = toll } else { items.append(toll) }
     }
     func delete(id: UUID) {
-        guard NSEntityDescription.entity(forEntityName: "SavedTollEntity", in: context) != nil else { return }
+        guard NSEntityDescription.entity(forEntityName: "SavedTollEntity", in: context) != nil else {
+            items.removeAll { $0.id == id }
+            return
+        }
         let fetch = NSFetchRequest<NSManagedObject>(entityName: "SavedTollEntity")
         fetch.predicate = NSPredicate(format: "id == %@", id as CVarArg)
         if let entity = ((try? context.fetch(fetch))?.first) {

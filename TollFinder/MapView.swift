@@ -67,7 +67,13 @@ struct MapView: View {
             VStack {
                 HStack {
                     Spacer()
-                    Button(action: { showSavedList = true }) {
+                    Button(action: {
+                        print("Saved tolls count: \(savedStore.items.count)")
+                        savedStore.items.forEach { t in
+                            print("Saved toll: \(t.id.uuidString) \(t.name) A: \(String(format: "%.2f", t.totalA)) B: \(String(format: "%.2f", t.totalB))")
+                        }
+                        showSavedList = true
+                    }) {
                         Image(systemName: "folder")
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.black)
@@ -240,6 +246,8 @@ struct MapView: View {
                     isTollSaved = true
                     let toll = SavedToll(id: UUID(), name: savedTollName.isEmpty ? "Saved Toll" : savedTollName, summary: tollSummaryText, totalA: tollAmountA, totalB: tollAmountB, stops: allStops)
                     savedStore.saveOrUpdate(toll: toll)
+                    print("Saved toll created: \(toll.id.uuidString) \(toll.name) A: \(String(format: "%.2f", toll.totalA)) B: \(String(format: "%.2f", toll.totalB))")
+                    print("Saved tolls count after save: \(savedStore.items.count)")
                     showSaveSheet = false
                     showSaveSuccess = true
                     toastManager.show(toast: ToastModel(
