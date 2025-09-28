@@ -1,5 +1,6 @@
 import SwiftUI
 import MapKit
+import UniformTypeIdentifiers
 
 struct AddressInputSheet: View {
     @Binding var stopAddresses: [String]
@@ -100,6 +101,9 @@ struct AddressInputSheet: View {
                 .font(.system(size: 16))
                 .foregroundColor(.gray)
                 .frame(width: 20)
+                .onDrag {
+                    return NSItemProvider(object: String(index) as NSString)
+                }
             
             TextField(getStopPlaceholder(for: index), text: $stopAddresses[index])
                 .font(.system(size: 16))
@@ -122,6 +126,7 @@ struct AddressInputSheet: View {
                 }
             }
         }
+        .onDrop(of: [.text], delegate: DropViewDelegate(destinationIndex: index, stopAddresses: $stopAddresses, allStops: $allStops, onStopsReordered: onStopsReordered))
     }
     private func removeStop(at index: Int) { onRemoveStop(index) }
     private var addStopButton: some View { Button(action: { onAddStop() }) { Image(systemName: "plus").font(.system(size: 16, weight: .medium)).foregroundColor(.black).frame(width: 32, height: 32).background(Color.gray.opacity(0.1)).clipShape(Circle()) }.padding(.trailing, 16) }
@@ -130,6 +135,50 @@ struct AddressInputSheet: View {
     private func performSearch(query: String) { guard query.count > 2 else { searchResults = []; return }; let nswCenter = CLLocationCoordinate2D(latitude: -32.0, longitude: 147.0); let request = MKLocalSearch.Request(); request.naturalLanguageQuery = query; request.resultTypes = [.address, .pointOfInterest]; request.region = MKCoordinateRegion(center: nswCenter, span: MKCoordinateSpan(latitudeDelta: 10.0, longitudeDelta: 12.0)); let search = MKLocalSearch(request: request); search.start { response, error in if error != nil { DispatchQueue.main.async { self.searchResults = [] }; return }; guard let response = response else { DispatchQueue.main.async { self.searchResults = [] }; return }; DispatchQueue.main.async { let filtered = response.mapItems.filter { item in let area = (item.placemark.administrativeArea ?? "").uppercased(); return area.contains("NSW") || area.contains("NEW SOUTH WALES") }; self.searchResults = filtered } } }
     private func getAddress(_ mapItem: MKMapItem) -> String { let placemark = mapItem.placemark; var parts: [String] = []; if let street = placemark.thoroughfare { parts.append(street) }; if let city = placemark.locality { parts.append(city) }; if let state = placemark.administrativeArea { parts.append(state) }; return parts.isEmpty ? "No address" : parts.joined(separator: ", ") }
     private func moveStops(from source: IndexSet, to destination: Int) { stopAddresses.move(fromOffsets: source, toOffset: destination); allStops.move(fromOffsets: source, toOffset: destination); for i in 0..<allStops.count { allStops[i] = RouteStop(coordinate: allStops[i].coordinate, address: allStops[i].address, order: i) }; onStopsReordered() }
+}
+
+struct DropViewDelegate: DropDelegate {
+    let destinationIndex: Int
+    @Binding var stopAddresses: [String]
+    @Binding var allStops: [RouteStop]
+    let onStopsReordered: () -> Void
+    
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        return DropProposal(operation: .move)
+    }
+    
+    func performDrop(info: DropInfo) -> Bool {
+        guard let item = info.itemProviders(for: [.text]).first else { return false }
+        
+        item.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil) { (data, error) in
+            guard let data = data as? Data,
+                  let sourceIndexString = String(data: data, encoding: .utf8),
+                  let sourceIndex = Int(sourceIndexString) else { return }
+            
+            DispatchQueue.main.async {
+                if sourceIndex != destinationIndex {
+                    let sourceAddress = stopAddresses[sourceIndex]
+                    let sourceStop = allStops[sourceIndex]
+                    
+                    stopAddresses.remove(at: sourceIndex)
+                    allStops.remove(at: sourceIndex)
+                    
+                    let newDestination = sourceIndex < destinationIndex ? destinationIndex - 1 : destinationIndex
+                    
+                    stopAddresses.insert(sourceAddress, at: newDestination)
+                    allStops.insert(sourceStop, at: newDestination)
+                    
+                    for i in 0..<allStops.count {
+                        allStops[i] = RouteStop(coordinate: allStops[i].coordinate, address: allStops[i].address, order: i)
+                    }
+                    
+                    onStopsReordered()
+                }
+            }
+        }
+        
+        return true
+    }
 }
 
 
