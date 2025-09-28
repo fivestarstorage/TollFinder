@@ -4,82 +4,9 @@ import CoreLocation
 import Combine
 import ToastifySwift
 import Shimmer
+import Foundation
 
-struct RouteStop: Identifiable, Codable {
-    let id = UUID()
-    let latitude: Double
-    let longitude: Double
-    let address: String
-    let order: Int
-    
-    var coordinate: CLLocationCoordinate2D {
-        CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-    }
-    
-    init(coordinate: CLLocationCoordinate2D, address: String, order: Int) {
-        self.latitude = coordinate.latitude
-        self.longitude = coordinate.longitude
-        self.address = address
-        self.order = order
-    }
-}
-
-struct TollPrice: Codable {
-    let typeA: Double
-    let typeB: Double
-    
-    init(typeA: Double, typeB: Double) {
-        self.typeA = typeA
-        self.typeB = typeB
-    }
-}
-
-enum CarType: String, CaseIterable, Codable {
-    case typeA = "Car"
-    case typeB = "Truck/Van"
-    
-    var displayName: String {
-        return self.rawValue
-    }
-}
-
-struct Route: Identifiable, Codable {
-    let id = UUID()
-    let stops: [RouteStop]
-    let tollPrice: TollPrice
-    let totalDistance: Double
-    let estimatedDuration: TimeInterval
-    let createdAt: Date
-    
-    var orderedStops: [RouteStop] {
-        return stops.sorted { $0.order < $1.order }
-    }
-    
-    var startLocation: RouteStop? {
-        return orderedStops.first
-    }
-    
-    var endLocation: RouteStop? {
-        return orderedStops.last
-    }
-    
-    func getTollPrice(for carType: CarType) -> Double {
-        switch carType {
-        case .typeA:
-            return tollPrice.typeA
-        case .typeB:
-            return tollPrice.typeB
-        }
-    }
-    
-    init(stops: [RouteStop], tollPrice: TollPrice, totalDistance: Double = 0, estimatedDuration: TimeInterval = 0) {
-        self.stops = stops
-        self.tollPrice = tollPrice
-        self.totalDistance = totalDistance
-        self.estimatedDuration = estimatedDuration
-        self.createdAt = Date()
-    }
-}
+ 
 
 struct MapView: View {
     @StateObject private var locationManager = LocationManager()
@@ -116,6 +43,7 @@ struct MapView: View {
     @State private var showTopBanner = false
     @State private var topBannerMessage = ""
     @State private var topBannerColor = Color.green
+    @State private var currentViewingSavedTollId: UUID? = nil
     
     enum ActiveField: Hashable {
         case stop(Int)
@@ -293,7 +221,7 @@ struct MapView: View {
                 isCalculatingTolls: $isCalculatingTolls
             )
         }
-        .toastify(using: toastManager, position: .top)
+        .toastify(using: toastManager)
         .sheet(isPresented: $showSaveSheet) {
             VStack(spacing: 16) {
                 Capsule()
@@ -309,7 +237,7 @@ struct MapView: View {
                     .padding(.horizontal, 16)
                 Button(action: {
                     isTollSaved = true
-                    let toll = SavedToll(id: UUID(), name: savedTollName.isEmpty ? "Saved Toll" : savedTollName, summary: tollSummaryText, totalA: tollAmountA, totalB: tollAmountB)
+                    let toll = SavedToll(id: UUID(), name: savedTollName.isEmpty ? "Saved Toll" : savedTollName, summary: tollSummaryText, totalA: tollAmountA, totalB: tollAmountB, stops: allStops)
                     savedTolls.append(toll)
                     showSaveSheet = false
                     showSaveSuccess = true
@@ -345,11 +273,27 @@ struct MapView: View {
                             tollAmountA = toll.totalA
                             tollAmountB = toll.totalB
                             isTollSaved = true
+                            currentViewingSavedTollId = toll.id
+                            stopAddresses = toll.stops.map { $0.address }
+                            allStops = toll.stops
+                            updateMapAnnotations()
+                            frameAllStops()
+                            isMapLocked = true
+                            didFitOnce = false
                             showTollCard = true
                         }) {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(toll.name)
-                                    .font(.system(size: 16, weight: .semibold))
+                                HStack {
+                                    Text(toll.name)
+                                        .foregroundColor(.black)
+                                        .font(.system(size: 16, weight: .semibold))
+                                    if currentViewingSavedTollId == toll.id {
+                                        Spacer()
+                                        Text("Viewing")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(.blue)
+                                    }
+                                }
                                 Text(toll.summary)
                                     .font(.system(size: 13))
                                     .foregroundColor(.gray)
@@ -361,6 +305,9 @@ struct MapView: View {
                             }
                             .padding(.vertical, 6)
                         }
+                    }
+                    .onDelete { indexSet in
+                        savedTolls.remove(atOffsets: indexSet)
                     }
                 }
                 .navigationTitle("Saved Tolls")
@@ -393,6 +340,12 @@ struct MapView: View {
             tollSummaryText = result.summary
             tollAmountA = result.totalA
             tollAmountB = result.totalB
+            if let currentId = currentViewingSavedTollId, let idx = savedTolls.firstIndex(where: { $0.id == currentId }) {
+                savedTolls[idx].summary = tollSummaryText
+                savedTolls[idx].totalA = tollAmountA
+                savedTolls[idx].totalB = tollAmountB
+                savedTolls[idx].stops = validStops
+            }
             isCalculatingTolls = false
             frameAllStops()
             isMapLocked = true
@@ -912,125 +865,13 @@ struct MapViewWithPolylines: UIViewRepresentable {
     }
 }
 
-struct StopAnnotation: Identifiable {
-    let id: UUID
-    let coordinate: CLLocationCoordinate2D
-    let title: String
-    let subtitle: String
-    let color: Color
-}
+/* moved to Models.swift */
+ 
 
 
-@MainActor
-final class TollCalculatorViewModel: ObservableObject {
-    struct TollLeg: Identifiable {
-        let id = UUID()
-        let name: String
-        let amountTypeA: Double
-        let amountTypeB: Double
-    }
+ 
 
-    func calculateTollsForRoute(stops: [RouteStop]) async {
-        guard stops.count >= 2 else { return }
-        
-        for i in 0..<(stops.count - 1) {
-            let a = stops[i]
-            let b = stops[i + 1]
-            let name = "Stop \(i + 1) -> Stop \(i + 2)"
-            do {
-                let resultA = try await getTollBetween(
-                    origin: (a.latitude, a.longitude, "Stop \(i + 1)"),
-                    destination: (b.latitude, b.longitude, "Stop \(i + 2)"),
-                    vehicleClass: "A"
-                )
-                let resultB = try await getTollBetween(
-                    origin: (a.latitude, a.longitude, "Stop \(i + 1)"),
-                    destination: (b.latitude, b.longitude, "Stop \(i + 2)"),
-                    vehicleClass: "B"
-                )
-                print("Toll \(name) — \(resultA.summary): A=$\(String(format: "%.2f", resultA.amount)) B=$\(String(format: "%.2f", resultB.amount))")
-            } catch {
-                print("Toll \(name): A=$0.00 B=$0.00")
-            }
-        }
-    }
-
-    func calculateTollsSummary(stops: [RouteStop]) async -> (summary: String, totalA: Double, totalB: Double) {
-        guard stops.count >= 2 else { return ("", 0, 0) }
-        var totalA: Double = 0
-        var totalB: Double = 0
-        var lastSummary: String = ""
-        for i in 0..<(stops.count - 1) {
-            let a = stops[i]
-            let b = stops[i + 1]
-            do {
-                let resultA = try await getTollBetween(
-                    origin: (a.latitude, a.longitude, "Stop \(i + 1)"),
-                    destination: (b.latitude, b.longitude, "Stop \(i + 2)"),
-                    vehicleClass: "A"
-                )
-                let resultB = try await getTollBetween(
-                    origin: (a.latitude, a.longitude, "Stop \(i + 1)"),
-                    destination: (b.latitude, b.longitude, "Stop \(i + 2)"),
-                    vehicleClass: "B"
-                )
-                totalA += resultA.amount
-                totalB += resultB.amount
-                lastSummary = resultA.summary
-            } catch {
-                continue
-            }
-        }
-        return (lastSummary, totalA, totalB)
-    }
-
-    private func getTollBetween(
-        origin: (lat: Double, lng: Double, name: String),
-        destination: (lat: Double, lng: Double, name: String),
-        vehicleClass: String
-    ) async throws -> (amount: Double, summary: String) {
-        let apiKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJZUVM3M2xwSkxoTlFGTk5Bb3VXYVo4MDFoeVkzSHo5Z0ZkQjJpXzRPTWFrIiwiaWF0IjoxNzU3MTM1MjY4fQ.Hb4K66Ae6wR_03Il08TeAdkbx9KK8J69D3bsL8d5zX4"
-
-        let reqBody: [String: Any] = [
-            "origin": ["lat": origin.lat, "lng": origin.lng, "name": origin.name],
-            "destination": ["lat": destination.lat, "lng": destination.lng, "name": destination.name],
-            "vehicleClass": vehicleClass,
-            "vehicleClassByMotorway": ["CCT": vehicleClass, "ED": vehicleClass, "LCT": vehicleClass, "M2": vehicleClass, "M4": vehicleClass, "M5": vehicleClass, "M7": vehicleClass, "SHB": vehicleClass, "SHT": vehicleClass],
-            "excludeToll": false,
-            "includeSteps": false,
-            "departureTime": ISO8601DateFormatter().string(from: Date())
-        ]
-
-        let url = URL(string: "https://api.transport.nsw.gov.au/v2/roads/toll_calc/route")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("apikey \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: reqBody, options: [])
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            return (0, "Toll calculation unavailable")
-        }
-
-        let json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any]
-        let routes = json?["routes"] as? [[String: Any]]
-        let route = routes?.first
-        let minChargeInCents = route?["minChargeInCents"] as? Double ?? 0
-        let summary = route?["summary"] as? String ?? "Toll Route"
-        var amount = minChargeInCents / 100.0
-        if vehicleClass == "B" { amount *= 1.5 }
-        return (amount, summary)
-    }
-}
-
-struct SavedToll: Identifiable, Equatable {
-    let id: UUID
-    var name: String
-    var summary: String
-    var totalA: Double
-    var totalB: Double
-}
+ 
 
 struct ShimmeringRoutesOverlay: View {
     @Binding var region: MKCoordinateRegion
@@ -1112,7 +953,7 @@ struct ShimmeringRoutesOverlay: View {
         return MKMapRect(origin: origin, size: size)
     }
 }
-struct AddressInputSheet: View {
+struct AddressInputSheet_OLD: View {
     @Binding var stopAddresses: [String]
     @Binding var activeField: MapView.ActiveField?
     @Binding var searchResults: [MKMapItem]
