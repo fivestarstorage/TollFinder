@@ -3,7 +3,24 @@
     <entity name="Item" representedClassName="Item" syncable="YES" codeGenerationType="class">
         <attribute name="timestamp" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
     </entity>
+    <entity name="SavedTollEntity" representedClassName="SavedTollEntity" syncable="YES" codeGenerationType="class">
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="name" optional="NO" attributeType="String"/>
+        <attribute name="summary" optional="NO" attributeType="String"/>
+        <attribute name="totalA" optional="NO" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="totalB" optional="NO" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <relationship name="stops" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="SavedStopEntity" inverseName="toll" inverseEntity="SavedStopEntity"/>
+    </entity>
+    <entity name="SavedStopEntity" representedClassName="SavedStopEntity" syncable="YES" codeGenerationType="class">
+        <attribute name="address" optional="NO" attributeType="String"/>
+        <attribute name="latitude" optional="NO" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="longitude" optional="NO" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="orderIndex" optional="NO" attributeType="Integer 16" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="toll" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="SavedTollEntity" inverseName="stops" inverseEntity="SavedTollEntity"/>
+    </entity>
     <elements>
         <element name="Item" positionX="-63" positionY="-18" width="128" height="44"/>
+        <element name="SavedTollEntity" positionX="-54" positionY="9" width="128" height="119"/>
+        <element name="SavedStopEntity" positionX="-36" positionY="27" width="128" height="104"/>
     </elements>
 </model>

@@ -79,7 +79,7 @@ struct StopAnnotation: Identifiable {
     let color: Color
 }
 
-struct SavedToll: Identifiable {
+struct SavedToll: Identifiable, Codable {
     let id: UUID
     var name: String
     var summary: String
@@ -95,7 +95,10 @@ final class SavedTollStore: ObservableObject {
     private var context: NSManagedObjectContext { PersistenceController.shared.container.viewContext }
     func load() {
         guard NSEntityDescription.entity(forEntityName: "SavedTollEntity", in: context) != nil,
-              NSEntityDescription.entity(forEntityName: "SavedStopEntity", in: context) != nil else { return }
+              NSEntityDescription.entity(forEntityName: "SavedStopEntity", in: context) != nil else {
+            loadFromDefaults()
+            return
+        }
         let req = NSFetchRequest<NSManagedObject>(entityName: "SavedTollEntity")
         do {
             let tollEntities = try context.fetch(req)
@@ -125,6 +128,7 @@ final class SavedTollStore: ObservableObject {
         guard NSEntityDescription.entity(forEntityName: "SavedTollEntity", in: context) != nil,
               NSEntityDescription.entity(forEntityName: "SavedStopEntity", in: context) != nil else {
             if let idx = items.firstIndex(where: { $0.id == toll.id }) { items[idx] = toll } else { items.append(toll) }
+            saveToDefaults()
             return
         }
         let fetch = NSFetchRequest<NSManagedObject>(entityName: "SavedTollEntity")
@@ -154,10 +158,12 @@ final class SavedTollStore: ObservableObject {
         tollEntity.setValue(currentStops, forKey: "stops")
         try? context.save()
         if let idx = items.firstIndex(where: { $0.id == toll.id }) { items[idx] = toll } else { items.append(toll) }
+        saveToDefaults()
     }
     func delete(id: UUID) {
         guard NSEntityDescription.entity(forEntityName: "SavedTollEntity", in: context) != nil else {
             items.removeAll { $0.id == id }
+            saveToDefaults()
             return
         }
         let fetch = NSFetchRequest<NSManagedObject>(entityName: "SavedTollEntity")
@@ -167,6 +173,17 @@ final class SavedTollStore: ObservableObject {
             try? context.save()
         }
         items.removeAll { $0.id == id }
+        saveToDefaults()
+    }
+    private func saveToDefaults() {
+        if let data = try? JSONEncoder().encode(items) {
+            UserDefaults.standard.set(data, forKey: "saved_tolls_v1")
+        }
+    }
+    private func loadFromDefaults() {
+        if let data = UserDefaults.standard.data(forKey: "saved_tolls_v1"), let decoded = try? JSONDecoder().decode([SavedToll].self, from: data) {
+            items = decoded
+        }
     }
 }
 

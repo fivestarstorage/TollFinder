@@ -44,6 +44,7 @@ struct MapView: View {
     @State private var topBannerMessage = ""
     @State private var topBannerColor = Color.green
     @State private var currentViewingSavedTollId: UUID? = nil
+    @State private var currentSavedTollId: UUID? = nil
     
     enum ActiveField: Hashable {
         case stop(Int)
@@ -136,7 +137,9 @@ struct MapView: View {
                                 .font(.system(size: 18, weight: .semibold))
                             Spacer()
                             Button(action: {
-                                showTollCard = false
+                                withAnimation(.easeInOut(duration: 0.3)) {
+                                    showTollCard = false
+                                }
                                 isMapLocked = false
                                 shouldUnlockOnDismiss = true
                                 stopAddresses = ["", ""]
@@ -145,6 +148,9 @@ struct MapView: View {
                                 routeOverlays = []
                                 currentRoute = nil
                                 searchResults = []
+                                isTollSaved = false
+                                currentSavedTollId = nil
+                                currentViewingSavedTollId = nil
                             }) {
                                 Image(systemName: "xmark")
                                     .foregroundColor(.black)
@@ -163,6 +169,10 @@ struct MapView: View {
                         HStack {
                             Button(action: {
                                 if isTollSaved {
+                                    if let tollId = currentSavedTollId {
+                                        savedStore.delete(id: tollId)
+                                        currentSavedTollId = nil
+                                    }
                                     isTollSaved = false
                                     topBannerMessage = "Toll unsaved"
                                     topBannerColor = .orange
@@ -243,9 +253,10 @@ struct MapView: View {
                     .cornerRadius(8)
                     .padding(.horizontal, 16)
                 Button(action: {
-                    isTollSaved = true
                     let toll = SavedToll(id: UUID(), name: savedTollName.isEmpty ? "Saved Toll" : savedTollName, summary: tollSummaryText, totalA: tollAmountA, totalB: tollAmountB, stops: allStops)
                     savedStore.saveOrUpdate(toll: toll)
+                    currentSavedTollId = toll.id
+                    isTollSaved = true
                     print("Saved toll created: \(toll.id.uuidString) \(toll.name) A: \(String(format: "%.2f", toll.totalA)) B: \(String(format: "%.2f", toll.totalB))")
                     print("Saved tolls count after save: \(savedStore.items.count)")
                     showSaveSheet = false
@@ -283,13 +294,16 @@ struct MapView: View {
                             tollAmountB = toll.totalB
                             isTollSaved = true
                             currentViewingSavedTollId = toll.id
+                            currentSavedTollId = toll.id
                             stopAddresses = toll.stops.map { $0.address }
                             allStops = toll.stops
                             updateMapAnnotations()
                             frameAllStops()
                             isMapLocked = true
                             didFitOnce = false
-                            showTollCard = true
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                showTollCard = true
+                            }
                         }) {
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
@@ -338,6 +352,11 @@ struct MapView: View {
         let validStops = allStops.filter { !$0.address.isEmpty }
         guard validStops.count >= 2 else { return }
         
+        if currentViewingSavedTollId == nil {
+            isTollSaved = false
+            currentSavedTollId = nil
+        }
+        
         isCalculatingTolls = true
         let tollPrice = calculateTollPrice(for: validStops)
         currentRoute = Route(stops: validStops, tollPrice: tollPrice)
@@ -363,7 +382,9 @@ struct MapView: View {
             shouldUnlockOnDismiss = false
             didFitOnce = false
             showingAddressInput = false
-            showTollCard = true
+            withAnimation(.easeInOut(duration: 0.3)) {
+                showTollCard = true
+            }
         }
     }
     
