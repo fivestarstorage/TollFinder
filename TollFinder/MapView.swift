@@ -39,7 +39,7 @@ struct MapView: View {
     @StateObject private var tollCalculator = TollCalculatorViewModel()
     @State private var routeEndpoints: [(start: CLLocationCoordinate2D, end: CLLocationCoordinate2D)] = []
     @State private var showSavedList = false
-    @State private var savedTolls: [SavedToll] = []
+    @StateObject private var savedStore = SavedTollStore.shared
     @State private var showTopBanner = false
     @State private var topBannerMessage = ""
     @State private var topBannerColor = Color.green
@@ -192,8 +192,7 @@ struct MapView: View {
         }
         .onAppear {
             locationManager.requestLocationPermission()
-            SavedTollStore.shared.load()
-            savedTolls = SavedTollStore.shared.items
+            savedStore.load()
         }
         .onChange(of: locationManager.userLocation) {
             if let location = locationManager.userLocation {
@@ -240,9 +239,7 @@ struct MapView: View {
                 Button(action: {
                     isTollSaved = true
                     let toll = SavedToll(id: UUID(), name: savedTollName.isEmpty ? "Saved Toll" : savedTollName, summary: tollSummaryText, totalA: tollAmountA, totalB: tollAmountB, stops: allStops)
-                    savedTolls.append(toll)
-                    SavedTollStore.shared.saveOrUpdate(toll: toll)
-                    savedTolls = SavedTollStore.shared.items
+                    savedStore.saveOrUpdate(toll: toll)
                     showSaveSheet = false
                     showSaveSuccess = true
                     toastManager.show(toast: ToastModel(
@@ -270,7 +267,7 @@ struct MapView: View {
         .sheet(isPresented: $showSavedList) {
             NavigationView {
                 List {
-                    ForEach(savedTolls) { toll in
+                    ForEach(savedStore.items) { toll in
                         Button(action: {
                             showSavedList = false
                             tollSummaryText = toll.summary
@@ -311,8 +308,7 @@ struct MapView: View {
                         }
                     }
                     .onDelete { indexSet in
-                        for idx in indexSet { SavedTollStore.shared.delete(id: savedTolls[idx].id) }
-                        savedTolls = SavedTollStore.shared.items
+                        for idx in indexSet { savedStore.delete(id: savedStore.items[idx].id) }
                     }
                 }
                 .navigationTitle("Saved Tolls")
@@ -345,13 +341,13 @@ struct MapView: View {
             tollSummaryText = result.summary
             tollAmountA = result.totalA
             tollAmountB = result.totalB
-            if let currentId = currentViewingSavedTollId, let idx = savedTolls.firstIndex(where: { $0.id == currentId }) {
-                savedTolls[idx].summary = tollSummaryText
-                savedTolls[idx].totalA = tollAmountA
-                savedTolls[idx].totalB = tollAmountB
-                savedTolls[idx].stops = validStops
-                SavedTollStore.shared.saveOrUpdate(toll: savedTolls[idx])
-                savedTolls = SavedTollStore.shared.items
+            if let currentId = currentViewingSavedTollId, let idx = savedStore.items.firstIndex(where: { $0.id == currentId }) {
+                var updated = savedStore.items[idx]
+                updated.summary = tollSummaryText
+                updated.totalA = tollAmountA
+                updated.totalB = tollAmountB
+                updated.stops = validStops
+                savedStore.saveOrUpdate(toll: updated)
             }
             isCalculatingTolls = false
             frameAllStops()
